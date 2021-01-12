@@ -1,6 +1,7 @@
 import os, select
 from Task import *
 from common import *
+from Syslog import *
 
 
 
@@ -17,6 +18,9 @@ class Gpio():
         s._name = name
         s._num = num
         s._fake = False
+
+        s._task = Task('gpio_%s_timeout' % s._name)
+        s.log = Syslog("gpio")
 
         s._usedGpio.append(s)
         if Gpio.gpioMode == 'real':
@@ -64,6 +68,7 @@ class Gpio():
 
 
     def setValue(s, val):
+        s._task.stop()
         if s._fake:
             return s.setValueFake(val)
         return s.setValueReal(val)
@@ -89,8 +94,13 @@ class Gpio():
         return s.valueReal()
 
 
-    def waitState(s, timeout):
-        pass
+    def setValueTimeout(s, val, timeout):
+        def taskDo(s):
+            Task.sleep(timeout)
+            s.setValue(val)
+
+        s._task.setCb(taskDo)
+        s._task.start()
 
 
     def gpioByNum(num):
@@ -113,6 +123,11 @@ class Gpio():
             if gpio.name() == name:
                 return gpio
         return None
+
+
+    def __str__(s):
+        return "GPIO %s, num = %d, mode = %s\n" % (s._name, s._num, s._mode)
+
 
 
 

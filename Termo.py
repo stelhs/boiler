@@ -1,27 +1,43 @@
 from Task import *
 from common import *
+from Syslog import *
 
 
 class Termo(Task):
     sensorMode = 'real'
 
+    class TermoError(Exception):
+        def __init__(s, *args):
+            Exception.__init__(s, args)
+
+
     def __init__(s, devName, name):
         Task.__init__(s, "termo_task_%s" % name)
         s._name = name
-        s._of = open("/sys/bus/w1/devices/%s/temperature" % devName, "r")
-        s._lock = threading.Lock()
+        s._devName = devName
         s._val = None
+        s.log = Syslog("termo_sensor_%s" % name)
+        s.error = False
+
         if s.sensorMode == 'fake':
             filePutContent('termo_sensor_%s' % name, "18.0")
             return
 
+        s._of = open("/sys/bus/w1/devices/%s/temperature" % devName, "r")
+        s._lock = threading.Lock()
         s.start()
 
 
     def read(s):
         while (1):
-            s._of.seek(0)
-            val = s._of.read().strip()
+            try:
+                s._of.seek(0)
+                val = s._of.read().strip()
+            except:
+                s.error = True
+                s.log.error("Can't read termo sensor")
+                return
+
             if not val:
                 Task.sleep(100)
                 continue
@@ -38,13 +54,18 @@ class Termo(Task):
 
 
     def val(s):
+        if s.error:
+            raise Termo.TermoError("Can't read termo sensor %s" % s._name, s._name)
+
         if s.sensorMode == 'real':
             with s._lock:
                 return s._val
 
-        return float(fileGetContent('termo_sensor_%s' % name))
+        return float(fileGetContent('termo_sensor_%s' % s._name))
 
 
+    def __str__(s):
+        return "TermoSensor %s/%s, temperature: %.1f" % (s._name, s._devName, s.val())
 
 
 
@@ -70,3 +91,4 @@ class TermoSensors():
 
     def exhaustGas_t(s):
         return s._exhaustGasTermo.val()
+

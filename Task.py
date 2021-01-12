@@ -1,5 +1,6 @@
 import threading
 import time
+from Syslog import *
 
 
 class TaskStopException(Exception):
@@ -8,8 +9,7 @@ class TaskStopException(Exception):
 
 class Task():
     listTasks = []
-    _stop = 0
-    _pause = 0
+    _state = "stopped"
     _id = None
 
     def __init__(s, name):
@@ -18,11 +18,14 @@ class Task():
         if Task.taskByName(name):
             raise Exception("Task with name '%s' is existed" % name)
         s.listTasks.append(s)
+        s.log = Syslog("task")
 
 
     def start(s):
+        s.log.info("staring task %s" % s._name)
         t = threading.Thread(target=s.thread, daemon=True, args=(s._name, ))
         t.start()
+        s._state = "running"
 
 
     def setCb(s, cb):
@@ -35,20 +38,27 @@ class Task():
             if s.do:
                 s.do()
         except TaskStopException:
-            print("task %s is stopped" % s.name())
-        s._stop = 0
+            s.log.info("task %s is stopped" % s._name)
+        s._state = "stopped"
 
 
     def stop(s):
-        s._stop = 1
+        if s._state != "running":
+            return
+        s.log.info("task %s is stoping" % s._name)
+        s._state = "stopping"
 
 
     def pause(s):
-        s._pause = 1
+        s.log.info("task %s paused" % s._name)
+        s._state = "paused"
 
 
     def resume(s):
-        s._pause = 0
+        if s._state != "paused":
+            return
+        s.log.info("task %s resumed" % s._name)
+        s._state = "running"
 
 
     def name(s):
@@ -82,11 +92,10 @@ class Task():
 
         t = interval
         while (1):
-            if task._stop:
-                print("rise stop")
+            if task._state == "stopping":
                 raise TaskStopException
 
-            while(task._pause):
+            while(task._state == "paused"):
                 time.sleep(1/10)
 
             if t >= 100:
@@ -95,3 +104,13 @@ class Task():
 
             if t <= 0:
                 break
+
+
+    def __str__(s):
+        return "Task %s, state: %s" % s._state
+
+
+    def printListTasks():
+        for tsk in s.listTasks:
+            print("%s\n" % tsk)
+
