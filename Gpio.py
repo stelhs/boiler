@@ -19,7 +19,6 @@ class Gpio():
         s._num = num
         s._fake = False
 
-        s._task = Task('gpio_%s_timeout' % s._name)
         s.log = Syslog("gpio")
 
         s._usedGpio.append(s)
@@ -94,15 +93,16 @@ class Gpio():
         return s.valueReal()
 
 
-    def setValueTimeout(s, val, timeout):
-        def taskDo(s):
-            Task.sleep(timeout)
+    def setValueTimeout(s, val, interval):
+        def timeout():
             s.setValue(val)
+            s.log.info("gpio '%s' is set to value '%d' by timeout: %d mS" %
+                        (s._name, val, interval))
 
-        s._task.setCb(taskDo)
-        s._task.start()
+        Task.setTimeout('gpio_%s_timeout' % s._name, interval, timeout)
 
 
+    @staticmethod
     def gpioByNum(num):
         for gpio in Gpio._usedGpio:
             if gpio.num() == num:
@@ -110,6 +110,7 @@ class Gpio():
         return None
 
 
+    @staticmethod
     def gpioByFd(fd):
         for gpio in Gpio._usedGpio:
             if gpio.fd() == fd:
@@ -118,6 +119,7 @@ class Gpio():
         return None
 
 
+    @staticmethod
     def gpioByName(name):
         for gpio in Gpio._usedGpio:
             if gpio.name() == name:

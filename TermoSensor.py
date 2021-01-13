@@ -3,7 +3,7 @@ from common import *
 from Syslog import *
 
 
-class Termo(Task):
+class TermoSensor():
     sensorMode = 'real'
 
     class TermoError(Exception):
@@ -12,7 +12,6 @@ class Termo(Task):
 
 
     def __init__(s, devName, name):
-        Task.__init__(s, "termo_task_%s" % name)
         s._name = name
         s._devName = devName
         s._val = None
@@ -24,8 +23,19 @@ class Termo(Task):
             return
 
         s._of = open("/sys/bus/w1/devices/%s/temperature" % devName, "r")
+
         s._lock = threading.Lock()
-        s.start()
+
+        def task():
+            while(1):
+                val = s.read()
+                with s._lock:
+                    s._val = val
+                Task.sleep(500)
+
+        s._task = Task("termo_sensor_%s" % name)
+        s._task.setCb(task)
+        s._task.start()
 
 
     def read(s):
@@ -45,17 +55,9 @@ class Termo(Task):
             return float(int(val) / 1000)
 
 
-    def do(s):
-        while(1):
-            val = s.read()
-            with s._lock:
-                s._val = val
-            Task.sleep(500)
-
-
     def val(s):
         if s.error:
-            raise Termo.TermoError("Can't read termo sensor %s" % s._name, s._name)
+            raise TermoSensor.TermoError("Can't read termo sensor %s" % s._name, s._name)
 
         if s.sensorMode == 'real':
             with s._lock:
@@ -65,30 +67,8 @@ class Termo(Task):
 
 
     def __str__(s):
-        return "TermoSensor %s/%s, temperature: %.1f" % (s._name, s._devName, s.val())
+        return "%s, TermoSensor %s/%s, temperature: %.1f" % (
+                    super().__str__(), s._name, s._devName, s.val())
 
 
-
-class TermoSensors():
-    def __init__(s):
-        s._boilerTermo = Termo("28-012033e26477", "boiler")
-        s._retTermo = Termo("28-012033f3fd8f", "return_water")
-        s._roomTermo = Termo("28-012033e45839", "room")
-        s._exhaustGasTermo = Termo("28-012033f9c648", "exhaust_gas")
-
-
-    def boiler_t(s):
-        return s._boilerTermo.val()
-
-
-    def ret_t(s):
-        return s._retTermo.val()
-
-
-    def room_t(s):
-        return s._roomTermo.val()
-
-
-    def exhaustGas_t(s):
-        return s._exhaustGasTermo.val()
 
