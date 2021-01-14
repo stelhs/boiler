@@ -12,10 +12,3 @@ def fileGetContent(filename):
     f.close()
     return data
 
-
-def printToTelegram(msg):
-    fd = open(".telegram_chat_id", "r")
-    content = fd.read()
-    fd.close()
-    chatId = int(content)
-    os.system("./telegram.php msg_send %s '%s'" % (chatId, msg))

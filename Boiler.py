@@ -2,6 +2,7 @@ from Task import *
 from HwIo import *
 from Store import *
 from Syslog import *
+from Telegram import *
 
 
 class Boiler():
@@ -22,6 +23,7 @@ class Boiler():
         s.log = Syslog("boiler")
         s._task = Task('boiler')
         s._task.setCb(s.doTask)
+        s.telegram = Telegram('boiler')
         s.stopBoiler()
 
 
@@ -32,7 +34,7 @@ class Boiler():
                 s.boiler_t = s.io.boiler_t()
                 s.returnWater_t = s.io.retWater_t()
             except TermoSensor.TermoError as e:
-                printToTelegram("Не удалось получить температуру: %s" % e.args[1])
+                s.telegram.send("Не удалось получить температуру: %s" % e.args[1])
                 s.stopBoiler()
 
 
@@ -51,7 +53,7 @@ class Boiler():
             return
 
         s.log.error("Over Heating!")
-        printToTelegram("Перегрев котла!")
+        s.telegram.send("Перегрев котла!")
 
         s.stopBoiler()
         s.funHeaterEnable(5 * 60 * 1000)
@@ -114,7 +116,7 @@ class Boiler():
 
         s.state = "WAITING"
         s.log.info("boiler started")
-        printToTelegram("Котёл запущен")
+        s.telegram.send("Котёл запущен")
         s._task.start()
         return True
 
@@ -122,7 +124,7 @@ class Boiler():
     def stopBoiler(s):
         s.state = "STOPPED"
         s.log.info("boiler stopped")
-        printToTelegram("Котёл остановлен")
+        s.telegram.send("Котёл остановлен")
 
         s.io.ignitionStop()
         s.io.funHeaterDisable()
@@ -187,7 +189,7 @@ class Boiler():
         rc = s.startHeating()
         if not rc:
             s.log.error("can't burn flame")
-            printToTelegram("Не удалось зажечь пламя")
+            s.telegram.send("Не удалось зажечь пламя")
             s.stopBoiler()
             return
 

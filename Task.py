@@ -1,6 +1,9 @@
 import threading
 import time
 from Syslog import *
+from Telegram import *
+from common import *
+import traceback
 
 
 class TaskStopException(Exception):
@@ -23,6 +26,7 @@ class Task():
             raise Exception("Task with name '%s' is existed" % name)
         s.listTasks.append(s)
         s.log = Syslog("task_%s" % name)
+        s.telegram = Telegram("task_%s" % name)
         s.log.debug("created")
         s._lock = threading.Lock()
         with s._lock:
@@ -50,6 +54,11 @@ class Task():
                 s.do()
         except TaskStopException:
             s.log.info("stopped")
+        except Exception as e:
+            trace = traceback.format_exc()
+            s.log.error("Exception: %s" % trace)
+            s.telegram.send("task '%s' was stopped by exception: %s" % (s._name, trace))
+
         s._state = "stopped"
         if s._removing:
             s.log.info("removed")
@@ -76,6 +85,10 @@ class Task():
 
 
     def remove(s):
+        if s._state == "stopped":
+            s.log.info("removed")
+            Task.listTasks.remove(s)
+            return
         s.log.info("removing")
         s._removing = True
 
