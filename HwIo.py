@@ -4,7 +4,7 @@ from Gpio import *
 
 class HwIo():
     def __init__(s):
-        if os.path.exists("FAKE"):
+        if os.path.isdir("FAKE"):
             Gpio.gpioMode = 'fake'
             TermoSensor.sensorMode = 'fake'
 
@@ -25,6 +25,8 @@ class HwIo():
                       "waterPump": Gpio('water_pump', 19, 'out'),
                       "funHeater": Gpio('fun_heater', 16, 'out'),
                       "mainPower": Gpio('main_power', 13, 'out')}
+
+        s.log = Syslog('HwIo')
 
 
     def boiler_t(s):
@@ -59,15 +61,18 @@ class HwIo():
         return not bool(s._gpioIn['pressureSensor'].value())
 
 
-    def waterPumpEnable(s):
-        s._gpioOut['waterPump'].setValue(1)
-
-
-    def waterPumpDisable(s, timeout = 0):
+    def waterPumpEnable(s, timeout = 0):
         g = s._gpioOut['waterPump']
         g.setValue(1)
+        s.log.info('water pump enable')
         if timeout:
+            s.log.info('water pump will disabled by timeout %dmS' % timeout)
             g.setValueTimeout(0, timeout)
+
+
+    def waterPumpDisable(s):
+        s._gpioOut['waterPump'].setValue(0)
+        s.log.info('water pump disable')
 
 
     def isWaterPumpEnabled(s):
@@ -77,12 +82,15 @@ class HwIo():
     def airFunEnable(s, timeout = 0):
         g = s._gpioOut['airFun']
         g.setValue(1)
+        s.log.info('air fun enable')
         if timeout:
+            s.log.info('air fun disabled by timeout %dmS' % timeout)
             g.setValueTimeout(0, timeout)
 
 
     def airFunDisable(s):
         s._gpioOut['airFun'].setValue(0)
+        s.log.info('air fun disable')
 
 
     def isAirFunEnabled(s):
@@ -91,10 +99,12 @@ class HwIo():
 
     def fuelPumpEnable(s):
         s._gpioOut['fuelPump'].setValue(1)
+        s.log.info('fuel pump enable')
 
 
     def fuelPumpDisable(s):
         s._gpioOut['fuelPump'].setValue(0)
+        s.log.info('fuel pump disable')
 
 
     def isFuelPumpEnabled(s):
@@ -104,12 +114,15 @@ class HwIo():
     def funHeaterEnable(s, timeout):
         g = s._gpioOut['funHeater']
         g.setValue(1)
+        s.log.info('fun heater enable')
         if timeout:
+            s.log.info('fun heater disabled by timeout %dmS' % timeout)
             g.setValueTimeout(0, timeout)
 
 
     def funHeaterDisable(s):
         s._gpioOut['funHeater'].setValue(0)
+        s.log.info('fun heater disable')
 
 
     def isFunHeaterEnabled(s):
@@ -118,10 +131,12 @@ class HwIo():
 
     def ignitionStart(s):
         s._gpioOut['ignitionCoin'].setValue(1)
+        s.log.info('ignition start')
 
 
     def ignitionStop(s):
         s._gpioOut['ignitionCoin'].setValue(0)
+        s.log.info('ignition stop')
 
 
     def isIgnitionEnabled(s):
@@ -130,10 +145,12 @@ class HwIo():
 
     def mainPowerRelayEnable(s):
         s._gpioOut['mainPower'].setValue(1)
+        s.log.info('main power relay enable')
 
 
     def mainPowerRelayDisable(s):
         s._gpioOut['mainPower'].setValue(0)
+        s.log.info('main power relay disable')
 
 
     def isMainPowerRelayEnabled(s):

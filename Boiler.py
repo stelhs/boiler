@@ -4,27 +4,28 @@ from Store import *
 from Syslog import *
 
 
-class Boiler(Task):
+class Boiler():
     # states:
-    #   SOFT_DISABLED
+    #   STOPPED
     #   WAITING
     #   HEATING
-    state = "SOFT_DISABLED"
+    state = "STOPPED"
 
     fake = False
 
     def __init__(s):
-        Task.__init__(s, "boiler")
-
-        if os.path.exists("FAKE"):
+        if os.path.isdir("FAKE"):
             s.fake = True
 
         s.io = HwIo()
         s._store = Store()
-        s.log = Syslog("main")
+        s.log = Syslog("boiler")
+        s._task = Task('boiler')
+        s._task.setCb(s.doTask)
+        s.stopBoiler()
 
 
-    def do(s):
+    def doTask(s):
         while(1):
             try:
                 s.room_t = s.io.room_t()
@@ -38,9 +39,9 @@ class Boiler(Task):
             s.checkOverHeating()
 
             if s.state == "WAITING":
-                doWaiting()
-            elif s.state == "HEATIMG":
-                doHeating()
+                s.doWaiting()
+            elif s.state == "HEATING":
+                s.doHeating()
 
             Task.sleep(1000)
 
@@ -57,29 +58,29 @@ class Boiler(Task):
 
 
     def targetRoom_t(s):
-        return s._store.tree['target_room_t']
+        return float(s._store.tree['target_room_t'])
 
 
     def setTargetRoom_t(s, t):
-        s._store.tree['target_room_t'] = t
+        s._store.tree['target_room_t'] = str(t)
         s._store.save()
 
 
     def targetBoilerMin_t(s):
-        return s._store.tree['target_boiler_min_t']
+        return float(s._store.tree['target_boiler_min_t'])
 
 
     def setTargetBoilerMin_t(s, t):
-        s._store.tree['target_boiler_min_t'] = t
+        s._store.tree['target_boiler_min_t'] = str(t)
         s._store.save()
 
 
     def targetBoilerMax_t(s):
-        return s._store.tree['target_boiler_max_t']
+        return float(s._store.tree['target_boiler_max_t'])
 
 
     def setTargetBoilerMax_t(s, t):
-        s._store.tree['target_boiler_max_t'] = t
+        s._store.tree['target_boiler_max_t'] = str(t)
         s._store.save()
 
 
@@ -87,10 +88,13 @@ class Boiler(Task):
         if s.io.isHwEnabled():
             return True
 
+        if s.fake:
+            return True
+
         s.io.mainPowerRelayEnable()
-        s.sleep(500)
+        Task.sleep(500)
         s.io.mainPowerRelayDisable()
-        s.sleep(500)
+        Task.sleep(500)
         if not s.io.isHwEnabled():
             s.log.error("can't enableMainPower() because HW power is absent")
             return False
@@ -99,6 +103,10 @@ class Boiler(Task):
 
 
     def startBoiler(s):
+        if s.state != "STOPPED":
+            s.log.debug("Can't start boiler, boiler already was started")
+            return
+
         ret = s.enableMainPower()
         if not ret:
             s.log.error("can't start boiler")
@@ -107,12 +115,12 @@ class Boiler(Task):
         s.state = "WAITING"
         s.log.info("boiler started")
         printToTelegram("Котёл запущен")
-        s.start()
+        s._task.start()
         return True
 
 
     def stopBoiler(s):
-        s.state = "SOFT_DISABLED"
+        s.state = "STOPPED"
         s.log.info("boiler stopped")
         printToTelegram("Котёл остановлен")
 
@@ -123,26 +131,28 @@ class Boiler(Task):
             s.io.fuelPumpDisable()
             s.log.info("air fun will stoped by timeout")
             s.io.airFunEnable(5000)
-            s.io.waterPumpDisable(5 * 60 * 1000)
+            s.io.waterPumpEnable(5 * 60 * 1000)
             return
 
-        s.io.airFunDisable(10000)
+        s.io.airFunEnable(10000)
         s.io.waterPumpDisable()
-        s.stop()
+        s._task.stop()
 
 
     def startHeating(s):
         s.log.info("start heating")
+        if s.fake:
+            return True
 
         if s.io.isFlameBurning():
             s.log.info("flame is burning, heating already started")
             return False
 
         s.io.airFunEnable()
-        s.sleep(5000)
+        Task.sleep(5000)
 
         s.io.fuelPumpEnable()
-        s.sleep(500)
+        Task.sleep(500)
 
         success = False
         s.io.ignitionStart()
@@ -165,12 +175,12 @@ class Boiler(Task):
 
             diff_t = s.boiler_t - s.returnWater_t
             if diff_t < 5:
-                s.log.info("water pump was disabled, boiler_t = %.1f, returnWater_t = %.1f" %
+                s.log.info("water pump was STOPPED, boiler_t = %.1f, returnWater_t = %.1f" %
                             (s.boiler_t, s.returnWater_t))
                 s.io.waterPumpDisable()
             return
 
-        if s.boiler_t >= s.targetBoilerMin_t():
+        if s.boiler_t > s.targetBoilerMin_t():
             return
 
         s.io.waterPumpEnable();
@@ -179,6 +189,7 @@ class Boiler(Task):
             s.log.error("can't burn flame")
             printToTelegram("Не удалось зажечь пламя")
             s.stopBoiler()
+            return
 
         s.state = "HEATING"
 
@@ -190,12 +201,23 @@ class Boiler(Task):
 
 
     def doHeating(s):
-        if s.boiler_t < targetBoilerMax_t():
+        if s.boiler_t < s.targetBoilerMax_t():
             return
 
         s.stopHeating()
-        s.state = WAITING
+        s.state = "WAITING"
 
 
     def __str__(s):
-        return "%s, Boiler state: %s" % (super().__str__(), s.state)
+        str = "Boiler state: %s\n" % s.state
+        if s.state != "STOPPED":
+            str += "target boiler t max: %.1f\n" % s.targetBoilerMax_t()
+            str += "target boiler t min: %.1f\n" % s.targetBoilerMin_t()
+            str += "current boiler t: %.1f\n" % s.boiler_t
+            str += "target room t: %.1f\n" % s.targetRoom_t()
+            str += "current room t: %.1f\n" % s.room_t
+        return str
+
+
+    def print(s):
+        print(s.__str__())

@@ -18,8 +18,10 @@ class Gpio():
         s._name = name
         s._num = num
         s._fake = False
+        s._timeoutTask = None
+        s._lock = threading.Lock()
 
-        s.log = Syslog("gpio")
+        s.log = Syslog("gpio%d_%s" % (s._num, s._name))
 
         s._usedGpio.append(s)
         if Gpio.gpioMode == 'real':
@@ -54,7 +56,14 @@ class Gpio():
 
 
     def initFake(s):
-        s._fileName = "GPIO%d_%s_%s" % (s._num, s._mode, s._name)
+        s._fileName = "FAKE/GPIO%d_%s_%s" % (s._num, s._mode, s._name)
+
+        if not os.path.exists(s._fileName):
+            if s._mode == 'in':
+                filePutContent(s._fileName, "1")
+            else:
+                filePutContent(s._fileName, "0")
+
         s._of = None
 
 
@@ -67,7 +76,13 @@ class Gpio():
 
 
     def setValue(s, val):
-        s._task.stop()
+        with s._lock:
+            if s._timeoutTask:
+                s.log.debug('cancel setValueTimeout')
+                s._timeoutTask.stop()
+                s._timeoutTask.remove()
+                s._timeoutTask = None
+
         if s._fake:
             return s.setValueFake(val)
         return s.setValueReal(val)
@@ -96,10 +111,17 @@ class Gpio():
     def setValueTimeout(s, val, interval):
         def timeout():
             s.setValue(val)
-            s.log.info("gpio '%s' is set to value '%d' by timeout: %d mS" %
-                        (s._name, val, interval))
+            s.log.info("set to value '%d' by timeout: %d mS" % (val, interval))
+            with s._lock:
+                s._timeoutTask = None
 
-        Task.setTimeout('gpio_%s_timeout' % s._name, interval, timeout)
+        task = Task.setTimeout('gpio_%s_%dmS' % (s._name, interval), interval, timeout)
+        with s._lock:
+            s._timeoutTask = task
+
+
+    def __str__(s):
+        return "GPIO%d_%s %s, val = %d" % (s._num, s._mode, s._name, s.value())
 
 
     @staticmethod
@@ -127,9 +149,10 @@ class Gpio():
         return None
 
 
-    def __str__(s):
-        return "GPIO %s, num = %d, mode = %s\n" % (s._name, s._num, s._mode)
-
+    @staticmethod
+    def printList():
+        for gpio in Gpio._usedGpio:
+            print(gpio)
 
 
 

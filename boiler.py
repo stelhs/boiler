@@ -5,7 +5,6 @@ from Boiler import *
 
 
 boiler = Boiler()
-boiler.printListTasks()
 
 
 

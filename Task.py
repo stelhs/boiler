@@ -13,7 +13,7 @@ class Task():
     _removing = False
     _tid = None
     cb = None
-    log = Syslog("static_task")
+    log = Syslog("task")
     lastId = 0
 
     def __init__(s, name):
@@ -23,7 +23,7 @@ class Task():
             raise Exception("Task with name '%s' is existed" % name)
         s.listTasks.append(s)
         s.log = Syslog("task_%s" % name)
-        s.log.debug("Task is created")
+        s.log.debug("created")
         s._lock = threading.Lock()
         with s._lock:
             Task.lastId += 1
@@ -31,7 +31,7 @@ class Task():
 
 
     def start(s):
-        s.log.info("staring task %s" % s._name)
+        s.log.info("start")
         t = threading.Thread(target=s.thread, daemon=True, args=(s._name, ))
         t.start()
         s._state = "running"
@@ -49,32 +49,34 @@ class Task():
             else:
                 s.do()
         except TaskStopException:
-            s.log.info("task %s is stopped" % s._name)
+            s.log.info("stopped")
         s._state = "stopped"
         if s._removing:
+            s.log.info("removed")
             Task.listTasks.remove(s)
 
 
     def stop(s):
         if s._state != "running":
             return
-        s.log.info("task %s is stoping" % s._name)
+        s.log.info("stoping")
         s._state = "stopping"
 
 
     def pause(s):
-        s.log.info("task %s paused" % s._name)
+        s.log.info("paused")
         s._state = "paused"
 
 
     def resume(s):
         if s._state != "paused":
             return
-        s.log.info("task %s resumed" % s._name)
+        s.log.info("resumed")
         s._state = "running"
 
 
     def remove(s):
+        s.log.info("removing")
         s._removing = True
 
 
@@ -152,17 +154,17 @@ class Task():
         def timeout():
             nonlocal task
             Task.sleep(interval)
-            Task.log.info("timeout %dmS is expire for timeout_%s" %
-                        (interval, name))
+            task.log.info("timeout expire")
             cb()
             task.remove()
 
         task.setCb(timeout)
         task.start()
+        return task
 
 
     @staticmethod
-    def printListTasks():
+    def printList():
         for tsk in Task.listTasks:
             print("%s" % tsk)
 

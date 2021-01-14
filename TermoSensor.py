@@ -19,7 +19,9 @@ class TermoSensor():
         s.error = False
 
         if s.sensorMode == 'fake':
-            filePutContent('termo_sensor_%s' % name, "18.0")
+            s._fileName = 'FAKE/termo_sensor_%s' % name
+            if not os.path.exists(s._fileName):
+                filePutContent(s._fileName, "18.0")
             return
 
         s._of = open("/sys/bus/w1/devices/%s/temperature" % devName, "r")
@@ -63,7 +65,7 @@ class TermoSensor():
             with s._lock:
                 return s._val
 
-        return float(fileGetContent('termo_sensor_%s' % s._name))
+        return float(fileGetContent(s._fileName))
 
 
     def __str__(s):

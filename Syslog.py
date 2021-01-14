@@ -5,12 +5,12 @@ class Syslog():
         s._subsystem = subsystemName
 
     def error(s, msg):
-        syslog.syslog(syslog.LOG_ERR, "boiler/%s ERROR: %s" % (s._subsystem, msg))
+        syslog.syslog(syslog.LOG_ERR, "%s ERROR: %s" % (s._subsystem, msg))
 
 
     def debug(s, msg):
-        syslog.syslog(syslog.LOG_DEBUG, "boiler/%s: %s" % (s._subsystem, msg))
+        syslog.syslog(syslog.LOG_DEBUG, "%s: %s" % (s._subsystem, msg))
 
 
     def info(s, msg):
-        syslog.syslog(syslog.LOG_INFO, "boiler/%s: %s" % (s._subsystem, msg))
+        syslog.syslog(syslog.LOG_INFO, "%s: %s" % (s._subsystem, msg))
