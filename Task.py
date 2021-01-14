@@ -41,15 +41,19 @@ class Task():
         s._state = "running"
 
 
-    def setCb(s, cb):
+    def setCb(s, cb, args = None):
         s.cb = cb
+        s.cbArgs = args
 
 
     def thread(s, name):
         s._tid = threading.get_ident()
         try:
             if s.cb:
-                s.cb()
+                if s.cbArgs:
+                    s.cb((s.cbArgs))
+                else:
+                    s.cb()
             else:
                 s.do()
         except TaskStopException:
@@ -57,7 +61,8 @@ class Task():
         except Exception as e:
             trace = traceback.format_exc()
             s.log.error("Exception: %s" % trace)
-            s.telegram.send("task '%s' was stopped by exception: %s" % (s._name, trace))
+            print("Task '%s' Exception:\n%s" % (s._name, trace))
+            s.telegram.send("stopped by exception: %s" % trace)
 
         s._state = "stopped"
         if s._removing:

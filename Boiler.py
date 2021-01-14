@@ -3,6 +3,7 @@ from HwIo import *
 from Store import *
 from Syslog import *
 from Telegram import *
+from HttpServer import *
 
 
 class Boiler():
@@ -24,6 +25,8 @@ class Boiler():
         s._task = Task('boiler')
         s._task.setCb(s.doTask)
         s.telegram = Telegram('boiler')
+        s.httpServer = HttpServer('127.0.0.1', 8890)
+        s.httpServer.setReqCb("GET", "/stat", s.httpReqStat)
         s.stopBoiler()
 
 
@@ -208,6 +211,10 @@ class Boiler():
 
         s.stopHeating()
         s.state = "WAITING"
+
+
+    def httpReqStat(s, args, body):
+        return "Good!!!"
 
 
     def __str__(s):
