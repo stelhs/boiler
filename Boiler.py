@@ -4,6 +4,7 @@ from Store import *
 from Syslog import *
 from Telegram import *
 from HttpServer import *
+from TimeCounter import *
 
 
 class Boiler():
@@ -29,9 +30,14 @@ class Boiler():
         s.httpServer.setReqCb("GET", "/stat", s.httpReqStat)
         s.io.setFunHeaterButtonCb(s.buttonFunHeaterCb)
         s.io.setHwEnableCb(s.hwEnableCb)
+        s.lowReturnWater = False
+
+        s.tcHeating = TimeCounter('heating_time')
 
         s.stopBoiler()
         s.telegram.send('Котёл перезапущен')
+
+
 
 
     def buttonFunHeaterCb(s, state, prevState):
@@ -71,8 +77,17 @@ class Boiler():
                 s.stopBoiler()
                 s.telegram.send("Не удалось получить температуру: %s, Котёл остановлен" % e.args[1])
 
-
             s.checkOverHeating()
+
+            if s.returnWater_t <= 3 and not s.lowReturnWater:
+                s.telegram.send("Температура теплоносителя упала "
+                                "до %.1f градусов!" % s.returnWater_t)
+                s.log.error("returnWater_t failing down to %.1f degree" % s.returnWater_t)
+                s.lowReturnWater = True
+
+            if s.returnWater_t > 3 and s.lowReturnWater:
+                s.lowReturnWater = False
+
 
             if s.state == "WAITING":
                 s.doWaiting()
@@ -144,16 +159,16 @@ class Boiler():
         return True
 
 
-    def heatingTime(s):
-        if s.state == "HEATING" and s._timeHeatingStart:
-            return int(time.time()) - s._timeHeatingStart
-        return 0
-
 
     def heatingTimeTotal(s):
         with s.store.lock:
             heatingTime = s.store.tree['heating_time']
-        return heatingTime + s.heatingTime()
+        return heatingTime + s.tcHeating.time()
+
+
+    def fuelConsumption(s):
+        heatingTime = s.heatingTimeTotal()
+        return heatingTime * 4.65 / 3600
 
 
     def ignitionCounter(s):
@@ -162,7 +177,7 @@ class Boiler():
 
 
     def saveHeatingTime(s):
-        heatingTime = s.heatingTime()
+        heatingTime = s.tcHeating.time()
         if heatingTime:
             with s.store.lock:
                 s.store.tree['heating_time'] += heatingTime
@@ -174,6 +189,7 @@ class Boiler():
 
         s.io.ignitionRelayDisable()
         s.io.funHeaterDisable()
+        s.tcHeating.stop()
         s.saveHeatingTime()
 
         if s.io.isFuelPumpEnabled():
@@ -228,7 +244,7 @@ class Boiler():
             return
 
         s.state = "HEATING"
-        s._timeHeatingStart = int(time.time())
+        s.tcHeating.start()
         with s.store.lock:
             s.store.tree['ignition_counter'] += 1
             s.store.save()
@@ -251,15 +267,36 @@ class Boiler():
 
     def stopHeating(s):
         s.log.info("stop heating")
+        s.tcHeating.stop()
         s.saveHeatingTime()
         s.io.fuelPumpDisable()
         s.io.airFunEnable(5000)
 
 
     def doHeating(s):
+        if s.tcHeating.time() > 10 * 60 and s.boiler_t < 30:
+            s.tcHeating.stop()
+            s.stopBoiler()
+            s.log.error("Boiler stopped by timeout. boiler t: %.1f, "
+                        "heating time: %d" % (s.boiler_t, s.tcHeating.time()))
+            s.telegram.send("Котёл работает более %d секунд а температура в котле "
+                            "так и не превысила 30 градусов. "
+                            "Котёл остановлен." % s.tcHeating.time())
+            return
+
+
         if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoom_t():
             s.stopHeating()
             s.state = "WAITING"
+            if s.room_t < s.targetRoom_t() and s.tcHeating.time() < 60:
+                s.tcHeating.stop()
+                s.stopBoiler()
+                s.log.error("The boiler has reached the temperature %.1f "
+                            "is very too quickly" % s.targetBoilerMax_t())
+                s.telegram.send("Котёл набрал температуру до %.1f градусов "
+                                "слишком быстро (за %d секунд), "
+                                "Котёл остановлен." % (s.targetBoilerMax_t(),
+                                                       s.tcHeating.time()))
 
 
     def httpReqStat(s, args, body):
@@ -275,9 +312,11 @@ class Boiler():
             str += "current return water t: %.1f\n" % s.returnWater_t
             str += "target room t: %.1f\n" % s.targetRoom_t()
             str += "current room t: %.1f\n" % s.room_t
-            str += "current heating time: %d sec\n" % s.heatingTime()
+            str += "current heating time: %d sec\n" % s.tcHeating.time()
             str += "total heating time: %d sec\n" % s.heatingTimeTotal()
+            str += "total fuel consumption: %.3f liters\n" % s.fuelConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
+
         return str
 
 
