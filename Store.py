@@ -1,4 +1,5 @@
 from common import *
+import threading
 import json
 import os
 
@@ -7,20 +8,25 @@ class Store():
     tree = {"target_room_t": "18",
             "target_boiler_min_t": "60",
             "target_boiler_max_t": "80",
+            "heating_time": 0,
+            "ignition_counter": 0,
             }
     storeFile = "store.js"
 
     def __init__(s):
+        s.lock = threading.Lock()
+
         if not os.path.exists(s.storeFile):
-            s.save()
+            with s.lock:
+                s.save()
             return
-        s.load()
+        with s.lock:
+            s.load()
 
 
     def load(s):
         c = fileGetContent(s.storeFile)
         s.tree = json.loads(c)
-
 
 
     def save(s):

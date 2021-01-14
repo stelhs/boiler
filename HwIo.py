@@ -13,6 +13,7 @@ class HwIo():
         s._roomTermo = TermoSensor("28-012033e45839", "room")
         s._exhaustGasTermo = TermoSensor("28-012033f9c648", "exhaust_gas")
 
+
         s._gpioIn = {"overHearting": Gpio('over_heating', 8, 'in'),
                      "hwEnable": Gpio('hw_enable', 9, 'in'),
                      "flameSensor": Gpio('flame_sensor', 23, 'in'),
@@ -27,6 +28,15 @@ class HwIo():
                       "mainPower": Gpio('main_power', 13, 'out')}
 
         s.log = Syslog('HwIo')
+        Gpio.startEvents()
+
+
+    def setFunHeaterButtonCb(s, cb):
+        s._gpioIn['fanHeaterSwitch'].setEventCb(cb)
+
+
+    def setHwEnableCb(s, cb):
+        s._gpioIn['hwEnable'].setEventCb(cb)
 
 
     def boiler_t(s):
@@ -111,7 +121,7 @@ class HwIo():
         return bool(s._gpioOut['fuelPump'].value())
 
 
-    def funHeaterEnable(s, timeout):
+    def funHeaterEnable(s, timeout = 0):
         g = s._gpioOut['funHeater']
         g.setValue(1)
         s.log.info('fun heater enable')
@@ -129,17 +139,17 @@ class HwIo():
         return bool(s._gpioOut['funHeater'].value())
 
 
-    def ignitionStart(s):
+    def ignitionRelayEnable(s):
         s._gpioOut['ignitionCoin'].setValue(1)
-        s.log.info('ignition start')
+        s.log.info('ignition relay enable')
 
 
-    def ignitionStop(s):
+    def ignitionRelayDisable(s):
         s._gpioOut['ignitionCoin'].setValue(0)
-        s.log.info('ignition stop')
+        s.log.info('ignition relay disable')
 
 
-    def isIgnitionEnabled(s):
+    def isIgnitionRelayEnabled(s):
         return bool(s._gpioOut['ignitionCoin'].value())
 
 
@@ -172,7 +182,7 @@ class HwIo():
         str += "isAirFunEnabled: %s\n" % s.isAirFunEnabled()
         str += "isFuelPumpEnabled: %s\n" % s.isFuelPumpEnabled()
         str += "isFunHeaterEnabled: %s\n" % s.isFunHeaterEnabled()
-        str += "isIgnitionEnabled: %s\n" % s.isIgnitionEnabled()
+        str += "isIgnitionRelayEnabled: %s\n" % s.isIgnitionRelayEnabled()
         str += "isMainPowerRelayEnabled: %s\n" % s.isMainPowerRelayEnabled()
         return str
 

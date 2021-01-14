@@ -7,6 +7,8 @@ from Syslog import *
 
 class Gpio():
     gpioMode = 'real'
+    poll = select.poll()
+    task = Task('gpio_events')
 
     _usedGpio = []
     def __init__(s, name, num, mode):
@@ -20,6 +22,8 @@ class Gpio():
         s._fake = False
         s._timeoutTask = None
         s._lock = threading.Lock()
+        s.eventCb = None
+        s.prevVal = None
 
         s.log = Syslog("gpio%d_%s" % (s._num, s._name))
 
@@ -104,8 +108,11 @@ class Gpio():
 
     def value(s):
         if s._fake:
-            return s.valueFake()
-        return s.valueReal()
+            val = s.valueFake()
+        else:
+            val = s.valueReal()
+        s.prevVal = val
+        return val
 
 
     def setValueTimeout(s, val, interval):
@@ -118,6 +125,20 @@ class Gpio():
         task = Task.setTimeout('gpio_%s_%dmS' % (s._name, interval), interval, timeout)
         with s._lock:
             s._timeoutTask = task
+
+
+    def setEventCb(s, cb):
+        if not s._of:
+            return
+        s.poll.register(s._of.fileno(), select.POLLPRI)
+        s.eventCb = cb
+
+
+    def unsetEvent(s):
+        if not s._of:
+            return
+        s.poll.usregister(s._of.fileno())
+        s.eventCb = None
 
 
     def __str__(s):
@@ -155,42 +176,31 @@ class Gpio():
             print(gpio)
 
 
-
-class GpioEventsTask(Task):
-    def __init__(s, gpios, cb):
-        Task.__init__(s, "gpio_events")
-        fake = False
-        s._poll = select.poll()
-        for gpio in gpios:
-            if not gpio.fd():
-                fake = True
-                break
-
-            s._poll.register(gpio.fd(), select.POLLPRI)
-
-        s._cb = cb
-        if not fake:
-            s.start()
-
-
-    def do(s):
+    @classmethod
+    def eventHandler(c):
         while (1):
             Task.sleep()
-            poll_list = s._poll.poll(100)
+            poll_list = c.poll.poll(100)
             if not len(poll_list):
                 continue
 
             for poll_ret in poll_list:
                 fd = poll_ret[0]
-                gpio = Gpio.gpioByFd(fd)
+                gpio = c.gpioByFd(fd)
+                prevVal = gpio.prevVal
                 val = gpio.value()
-                s._cb(gpio, val)
+                if gpio.eventCb:
+                    gpio.eventCb(val, prevVal)
 
 
-    def generateAction(s, gpioNum, val):
-        gpio = Gpio.gpioByNum(gpioNum)
-        if not gpio:
-            return
-        s._cb(gpio, val)
+    @classmethod
+    def startEvents(c):
+        c.task.setCb(c.eventHandler)
+        c.task.start()
+
+
+    @classmethod
+    def stopEvents(c):
+        c.task.stop()
 
 
