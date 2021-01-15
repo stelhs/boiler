@@ -5,6 +5,7 @@ from Syslog import *
 from Telegram import *
 from HttpServer import *
 from TimeCounter import *
+import json
 
 
 class Boiler():
@@ -27,10 +28,19 @@ class Boiler():
         s._task.setCb(s.doTask)
         s.telegram = Telegram('boiler')
         s.httpServer = HttpServer('127.0.0.1', 8890)
-        s.httpServer.setReqCb("GET", "/stat", s.httpReqStat)
+        s.httpServer.setReqCb("GET", "/boiler", s.httpReqStat)
+        s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup)
+        s.httpServer.setReqCb("GET", "/boiler/start", s.httpReqStart)
+        s.httpServer.setReqCb("GET", "/boiler/stop", s.httpReqStop)
+        s.httpServer.setReqCb("GET", "/boiler/enable_power", s.httpReqEnablePower)
+        s.httpServer.setReqCb("GET", "/boiler/enable_fun_heater", s.httpReqEnableFunHeater)
+        s.httpServer.setReqCb("GET", "/boiler/disable_fun_heater", s.httpReqDisableFunHeater)
         s.io.setFunHeaterButtonCb(s.buttonFunHeaterCb)
         s.io.setHwEnableCb(s.hwEnableCb)
         s.lowReturnWater = False
+
+        s._funHeaterEnable = False
+        s._ioFunHeaterStopTriggering = False
 
         s.tcHeating = TimeCounter('heating_time')
 
@@ -38,6 +48,19 @@ class Boiler():
         s.telegram.send('Котёл перезапущен')
 
 
+    def funHeaterEnable(s):
+        s._funHeaterEnable = True
+        if s.state == "HEATING":
+            s.io.funHeaterEnable()
+
+
+    def funHeaterDisable(s):
+        s._funHeaterEnable = False
+        s.io.funHeaterDisable()
+
+
+    def isFunHeaterEnabled(s):
+        return s._funHeaterEnable
 
 
     def buttonFunHeaterCb(s, state, prevState):
@@ -45,10 +68,10 @@ class Boiler():
             return
 
         s.log.info('button Fun Heater is pressed')
-        if s.io.isFunHeaterEnabled():
-            s.io.funHeaterDisable()
+        if s.isFunHeaterEnabled():
+            s.funHeaterDisable()
         else:
-            s.io.funHeaterEnable()
+            s.funHeaterEnable()
 
 
     def hwEnableCb(s, state, prevState):
@@ -150,7 +173,7 @@ class Boiler():
     def startBoiler(s):
         if s.state != "STOPPED":
             s.log.debug("Can't start boiler, boiler already was started")
-            return
+            return False
 
         s.state = "WAITING"
         s.log.info("boiler started")
@@ -187,24 +210,24 @@ class Boiler():
     def stopBoiler(s):
         s.log.info("boiler stopped")
 
+        if s.state == "HEATING":
+            s.stopHeating()
+
         s.io.ignitionRelayDisable()
         s.io.funHeaterDisable()
         s.tcHeating.stop()
         s.saveHeatingTime()
+        s.io.airFunEnable(10000)
+        s._task.stop()
+        s.state = "STOPPED"
 
         if s.io.isFuelPumpEnabled():
             s.io.fuelPumpDisable()
             s.log.info("air fun will stoped by timeout")
-            s.io.airFunEnable(5000)
             s.io.waterPumpEnable(5 * 60 * 1000)
             return
 
-        s.io.airFunEnable(10000)
         s.io.waterPumpDisable()
-        s._task.stop()
-
-        s.state = "STOPPED"
-        s._timeHeatingStart = None
 
 
     def startHeating(s):
@@ -243,6 +266,9 @@ class Boiler():
             s.telegram.send("Не удалось зажечь пламя, котёл остановлен")
             return
 
+        if s._funHeaterEnable:
+            s.io.funHeaterEnable()
+
         s.state = "HEATING"
         s.tcHeating.start()
         with s.store.lock:
@@ -253,6 +279,7 @@ class Boiler():
 
     def doWaiting(s):
         if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoom_t():
+            s._ioFunHeaterStopTriggering = False
             s.startHeating()
             return
 
@@ -264,11 +291,14 @@ class Boiler():
                 s.io.waterPumpDisable()
             return
 
+        if s.room_t >= s.targetRoom_t():
+            if s._funHeaterEnable and not s._ioFunHeaterStopTriggering:
+                s.io.funHeaterEnable(30000)
+                s._ioFunHeaterStopTriggering = True
+
 
     def stopHeating(s):
         s.log.info("stop heating")
-        s.tcHeating.stop()
-        s.saveHeatingTime()
         s.io.fuelPumpDisable()
         s.io.airFunEnable(5000)
 
@@ -300,7 +330,74 @@ class Boiler():
 
 
     def httpReqStat(s, args, body):
-        return "Good!!!"
+        data = {}
+        data['state'] = s.state
+        data['target_boiler_t_max'] = s.targetBoilerMax_t()
+        data['target_boiler_t_min'] = s.targetBoilerMin_t()
+        data['total_heating_time'] = s.heatingTimeTotal()
+        data['total_fuel_consumption'] = s.fuelConsumption()
+        data['ignition_counter'] = s.ignitionCounter()
+
+        if s.state != "STOPPED":
+            data['current_boiler_t'] = s.boiler_t
+            data['current_return_water_t'] = s.returnWater_t
+            data['target_room_t'] = s.targetRoom_t()
+            data['current_room_t'] = s.room_t
+            data['current_heating_time'] = s.tcHeating.time()
+            data['fun_heater_is_enabled'] = s.isFunHeaterEnabled()
+
+        return json.dumps(data)
+
+
+    def httpReqSutup(s, args, body):
+        if not args:
+            return json.dumps({"status": "error",
+                               "reason": "incorrect arguments"})
+
+        if 'target_boiler_t_max' in args:
+            s.setTargetBoilerMax_t(args['target_boiler_t_max'])
+
+        if 'target_boiler_t_min' in args:
+            s.setTargetBoilerMin_t(args['target_boiler_t_min'])
+
+        if 'target_room_t' in args:
+            s.setTargetRoom_t(args['target_room_t'])
+
+        return json.dumps({"status": "ok"})
+
+
+    def httpReqStart(s, args, body):
+        rc = s.startBoiler()
+        if not rc:
+            return json.dumps({"status": "error",
+                               "reason": "boiler already was started"})
+        s.telegram.send('Котёл запущен по REST запросу')
+        return json.dumps({"status": "ok"})
+
+
+    def httpReqStop(s, args, body):
+        s.stopBoiler()
+        s.telegram.send('Котёл остановлен по REST запросу')
+        return json.dumps({"status": "ok"})
+
+
+    def httpReqEnablePower(s, args, body):
+        s.enableMainPower()
+        s.telegram.send('Произведена попытка включения питания котла по REST запросу')
+        return json.dumps({"status": "ok"})
+
+
+    def httpReqEnableFunHeater(s, args, body):
+        s.telegram.send('Тепло-вентилятор включен по REST запросу')
+        s.funHeaterEnable()
+        return json.dumps({"status": "ok"})
+
+
+    def httpReqDisableFunHeater(s, args, body):
+        s.funHeaterDisable()
+        s.telegram.send('Тепло-вентилятор отключен по REST запросу')
+        return json.dumps({"status": "ok"})
+
 
 
     def __str__(s):
@@ -316,6 +413,7 @@ class Boiler():
             str += "total heating time: %d sec\n" % s.heatingTimeTotal()
             str += "total fuel consumption: %.3f liters\n" % s.fuelConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
+            str += "fun heater: %s\n" % s.isFunHeaterEnabled()
 
         return str
 
