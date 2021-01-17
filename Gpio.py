@@ -56,7 +56,7 @@ class Gpio():
         filePutContent("/sys/class/gpio/gpio%d/direction" % s._num, s._mode)
         filePutContent("/sys/class/gpio/gpio%d/edge" % s._num, "both")
 
-        s._of = open("/sys/class/gpio/gpio%d/value" % s._num, "r")
+        s._of = open("/sys/class/gpio/gpio%d/value" % s._num, "r+")
 
 
     def initFake(s):
@@ -72,7 +72,9 @@ class Gpio():
 
 
     def setValueReal(s, val):
+        s._of.seek(0)
         s._of.write("%d" % val)
+        s._of.flush()
 
 
     def setValueFake(s, val):
@@ -100,6 +102,7 @@ class Gpio():
 
 
     def valueReal(s):
+        s._of.seek(0)
         val = s._of.read()
         if val.strip() == '1':
             return 1

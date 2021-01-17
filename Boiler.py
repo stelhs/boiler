@@ -185,9 +185,7 @@ class Boiler():
 
     def heatingTimeTotal(s):
         with s.store.lock:
-            heatingTime = s.store.tree['heating_time']
-        return heatingTime + s.tcHeating.time()
-
+            return s.store.tree['heating_time']
 
     def fuelConsumption(s):
         heatingTime = s.heatingTimeTotal()
@@ -227,6 +225,10 @@ class Boiler():
             s.io.waterPumpEnable(5 * 60 * 1000)
             return
 
+#        if s.room_t < s.targetRoom_t():
+ #           s.io.waterPumpEnable(5 * 60 * 1000)
+ #TODO !!!
+
         s.io.waterPumpDisable()
 
 
@@ -245,12 +247,12 @@ class Boiler():
         s.io.airFunEnable()
         Task.sleep(5000)
 
+        s.io.ignitionRelayEnable()
         s.io.fuelPumpEnable()
         Task.sleep(500)
 
         success = False
         if not s.fake:
-            s.io.ignitionRelayEnable()
             for attempt in range(3):
                 if s.io.isFlameBurning():
                     s.log.debug("flame is started at attempt %d" % attempt)
@@ -300,6 +302,8 @@ class Boiler():
     def stopHeating(s):
         s.log.info("stop heating")
         s.io.fuelPumpDisable()
+        s.tcHeating.stop()
+        s.saveHeatingTime()
         s.io.airFunEnable(5000)
 
 
@@ -327,6 +331,13 @@ class Boiler():
                                 "слишком быстро (за %d секунд), "
                                 "Котёл остановлен." % (s.targetBoilerMax_t(),
                                                        s.tcHeating.time()))
+
+        if not s.io.isFlameBurning():
+            s.log.error("the flame went out!")
+            s.telegram.send("Пламя в котле самопроизвольно погасло!")
+            s.tcHeating.stop()
+            s.state = "WAITING"
+            return False
 
 
     def httpReqStat(s, args, body):

@@ -9,9 +9,10 @@ class HwIo():
             TermoSensor.sensorMode = 'fake'
 
         s._boilerTermo = TermoSensor("28-012033e26477", "boiler")
-        s._retTermo = TermoSensor("28-012033f3fd8f", "return_water")
-        s._roomTermo = TermoSensor("28-012033e45839", "room")
-        s._exhaustGasTermo = TermoSensor("28-012033f9c648", "exhaust_gas")
+        s._retTermo = TermoSensor("28-012033e45839", "return_water")
+        s._roomTermo = TermoSensor("28-012033f3fd8f", "room")
+        s._exhaustGasTermo = TermoSensor("28-012033f9c648", "boiler_inside")
+#        s._exhaustGasTermo = TermoSensor("28-012033f9c648", "exhaust_gas")
 
 
         s._gpioIn = {"overHearting": Gpio('over_heating', 8, 'in'),
@@ -56,7 +57,7 @@ class HwIo():
 
 
     def isOverHearting(s):
-        return not bool(s._gpioIn['overHearting'].value())
+        return bool(s._gpioIn['overHearting'].value())
 
 
     def isHwEnabled(s):
@@ -64,6 +65,7 @@ class HwIo():
 
 
     def isFlameBurning(s):
+       # return True
         return not bool(s._gpioIn['flameSensor'].value())
 
 

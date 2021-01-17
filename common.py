@@ -3,6 +3,7 @@ import os
 def filePutContent(filename, data):
     f = open(filename, "w")
     f.write(data)
+    f.flush()
     f.close()
 
 
