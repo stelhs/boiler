@@ -64,38 +64,49 @@ class Task():
             print("Task '%s' Exception:\n%s" % (s._name, trace))
             s.telegram.send("stopped by exception: %s" % trace)
 
-        s._state = "stopped"
-        if s._removing:
-            s.log.info("removed")
-            Task.listTasks.remove(s)
+        with s._lock:
+            s._state = "stopped"
+
+            if s._removing:
+                s.log.info("removed")
+                Task.listTasks.remove(s)
+                s._state == "removed"
+                s.log.info("removed")
 
 
     def stop(s):
-        if s._state != "running":
-            return
-        s.log.info("stoping")
-        s._state = "stopping"
+        with s._lock:
+            if s._state != "running":
+                return
+            s.log.info("stoping")
+
+            s._state = "stopping"
 
 
     def pause(s):
-        s.log.info("paused")
-        s._state = "paused"
+        with s._lock:
+            s.log.info("paused")
+            s._state = "paused"
 
 
     def resume(s):
-        if s._state != "paused":
-            return
-        s.log.info("resumed")
-        s._state = "running"
+        with s._lock:
+            if s._state != "paused":
+                return
+            s.log.info("resumed")
+            s._state = "running"
 
 
     def remove(s):
-        if s._state == "stopped":
-            s.log.info("removed")
-            Task.listTasks.remove(s)
-            return
-        s.log.info("removing")
-        s._removing = True
+        with s._lock:
+            if s._state == "stopped":
+                Task.listTasks.remove(s)
+                s._state == "removed"
+                s.log.info("removed")
+                return
+
+            s.log.info("removing")
+            s._removing = True
 
 
     def name(s):
@@ -109,6 +120,12 @@ class Task():
     def tid(s):
         return s._tid
 
+
+    def waitForRemoved(s):
+        while 1:
+            if s._state == "removed":
+                return
+            s.sleep(100)
 
     @staticmethod
     def taskById(id):

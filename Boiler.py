@@ -8,6 +8,7 @@ from TimeCounter import *
 import json
 
 
+
 class Boiler():
     # states:
     #   STOPPED
@@ -43,8 +44,14 @@ class Boiler():
         s._ioFunHeaterStopTriggering = False
 
         s.tcHeating = TimeCounter('heating_time')
+        s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
+        s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
+        s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
+        s._checkDiffWater_t = Observ(lambda: s.boiler_t - s.returnWater_t, s.evDiffWater_t)
+
 
         s.stopBoiler()
+        s._task.start()
         s.telegram.send('Котёл перезапущен')
 
 
@@ -91,6 +98,7 @@ class Boiler():
 
 
     def doTask(s):
+        errCnt = 0
         while(1):
             try:
                 s.room_t = s.io.room_t()
@@ -98,19 +106,22 @@ class Boiler():
                 s.returnWater_t = s.io.retWater_t()
             except TermoSensor.TermoError as e:
                 s.stopBoiler()
-                s.telegram.send("Не удалось получить температуру: %s, Котёл остановлен" % e.args[1])
+                s.telegram.send("Ошибка при получении температур: %s, Котёл остановлен" % e.args[1])
 
-            s.checkOverHeating()
+            if not s.room_t or not s.boiler_t or not s.returnWater_t:
+                if errCnt > 5:
+                    s.stopBoiler()
+                    s.telegram.send("Датчики температур не работают: %s, Котёл остановлен" % e.args[1])
 
-            if s.returnWater_t <= 3 and not s.lowReturnWater:
-                s.telegram.send("Температура теплоносителя упала "
-                                "до %.1f градусов!" % s.returnWater_t)
-                s.log.error("returnWater_t failing down to %.1f degree" % s.returnWater_t)
-                s.lowReturnWater = True
+                errCnt += 1
+                Task.sleep(500)
+                continue
 
-            if s.returnWater_t > 3 and s.lowReturnWater:
-                s.lowReturnWater = False
-
+            s._checkOverHeating()
+            s._checkWaterIsCold()
+            s._checkWaterPressure()
+            s._checkDiffWater_t()
+            s.checkTermoSensors()
 
             if s.state == "WAITING":
                 s.doWaiting()
@@ -120,15 +131,77 @@ class Boiler():
             Task.sleep(1000)
 
 
-    def checkOverHeating(s):
-        if not s.io.isOverHearting():
+    def evOverHeating(s, isOverHearting):
+        if not isOverHearting:
             return
 
         s.log.error("Over Heating!")
-        s.telegram.send("Перегрев котла! Всё остановлено")
+        msg = "Пропало питание, возможно перегрев котла!"
+        if s.state != "STOPPED":
+            s.stopBoiler()
+            s.io.funHeaterEnable(5 * 60 * 1000)
+            msg += " Котёл остановлен."
 
-        s.stopBoiler()
-        s.io.funHeaterEnable(5 * 60 * 1000)
+        s.telegram.send(msg)
+
+
+    def evWaterIsCold(s, returnWater_t):
+        if returnWater_t <= 3:
+            s.telegram.send("Температура теплоносителя упала "
+                            "до %.1f градусов!" % returnWater_t)
+            s.log.error("returnWater_t failing down to %.1f degree" % returnWater_t)
+
+
+    def evWaterPressure(s, isWaterPressureNormal):
+        if isWaterPressureNormal:
+            s.telegram.send("Давление в системе отопления восстановлено")
+            s.log.info("Water pressure go to normal")
+            return
+
+        s.log.error("Falling water pressure")
+        msg = "Упало давление в системе отопления!"
+        if s.state != "STOPPED":
+            s.stopBoiler()
+            msg += " Котёл остановлен."
+        s.telegram.send(msg)
+        return
+
+
+    def evDiffWater_t(s, diff):
+        if diff > 1:
+            s.io.waterPumpEnable()
+        else:
+            s.io.waterPumpDisable()
+
+
+    def checkTermoSensors(s):
+        if s.state == "STOPPED":
+            return
+
+        if s.room_t < -10 or s.room_t > 30:
+            s.log.error("termosensor room_t is not correct, %.1f degree." % s.room_t)
+            s.telegram.send("Ошибка термодатчика room_t, "
+                            "он показывает температуру: %.1f градусов. "
+                            "Котёл остановлен." % s.room_t)
+            s.stopBoiler()
+            return
+
+        if s.boiler_t < -1 or s.boiler_t > 120:
+            s.log.error("termosensor boiler_t is not correct, %.1f degree." % s.room_t)
+            s.telegram.send("Ошибка термодатчика boiler_t, "
+                            "он показывает температуру: %.1f градусов. "
+                            "Котёл остановлен." % s.boiler_t)
+            s.stopBoiler()
+            return
+
+        if s.returnWater_t < -1 or s.returnWater_t > 120:
+            s.log.error("termosensor returnWater_t is not correct, %.1f degree." % s.room_t)
+            s.telegram.send("Ошибка термодатчика returnWater_t, "
+                            "он показывает температуру: %.1f градусов. "
+                            "Котёл остановлен." % s.boiler_t)
+            s.stopBoiler()
+            return
+
 
 
     def targetRoom_t(s):
@@ -170,26 +243,19 @@ class Boiler():
         s.io.mainPowerRelayDisable()
 
 
-    def startBoiler(s):
-        if s.state != "STOPPED":
-            s.log.debug("Can't start boiler, boiler already was started")
-            return False
-
-        s.state = "WAITING"
-        s.log.info("boiler started")
-        s._task.start()
-        s.telegram.send("Котёл включен")
-        return True
-
-
-
     def heatingTimeTotal(s):
         with s.store.lock:
             return s.store.tree['heating_time']
 
+
     def fuelConsumption(s):
         heatingTime = s.heatingTimeTotal()
         return heatingTime * 4.65 / 3600
+
+
+    def energyConsumption(s):
+        heatingTime = s.heatingTimeTotal()
+        return heatingTime * 40 / 3600
 
 
     def ignitionCounter(s):
@@ -205,31 +271,45 @@ class Boiler():
                 s.store.save()
 
 
+    def startBoiler(s):
+        if s.state != "STOPPED":
+            s.log.error("Can't start boiler, boiler already was started")
+            return False
+
+        if not s.io.isHwEnabled():
+            s.log.error("Can't start boiler, HW power is not present")
+            return False
+
+        if not s.io.isPressureNormal():
+            s.log.error("Can't start boiler, No water pressure")
+            return False
+
+
+        s.state = "WAITING"
+        s.log.info("boiler started")
+        s.telegram.send("Котёл включен")
+        return True
+
+
     def stopBoiler(s):
         s.log.info("boiler stopped")
 
         if s.state == "HEATING":
             s.stopHeating()
 
+        if s.io.isFuelPumpEnabled():
+            s.io.fuelPumpDisable()
+
         s.io.ignitionRelayDisable()
         s.io.funHeaterDisable()
         s.tcHeating.stop()
         s.saveHeatingTime()
-        s.io.airFunEnable(10000)
-        s._task.stop()
+        if s.io.isAirFunEnabled():
+            s.io.airFunEnable(10000)
+        else:
+            s.io.airFunDisable()
+
         s.state = "STOPPED"
-
-        if s.io.isFuelPumpEnabled():
-            s.io.fuelPumpDisable()
-            s.log.info("air fun will stoped by timeout")
-            s.io.waterPumpEnable(5 * 60 * 1000)
-            return
-
-#        if s.room_t < s.targetRoom_t():
- #           s.io.waterPumpEnable(5 * 60 * 1000)
- #TODO !!!
-
-        s.io.waterPumpDisable()
 
 
     def startHeating(s):
@@ -243,14 +323,12 @@ class Boiler():
             s.log.info("flame is burning, heating already started")
             return False
 
-        s.io.waterPumpEnable();
         s.io.airFunEnable()
         Task.sleep(5000)
 
         s.io.ignitionRelayEnable()
         s.io.fuelPumpEnable()
         Task.sleep(500)
-
         success = False
         if not s.fake:
             for attempt in range(3):
@@ -278,6 +356,13 @@ class Boiler():
             s.store.save()
 
 
+    def stopHeating(s):
+        s.log.info("stop heating")
+        s.io.fuelPumpDisable()
+        s.tcHeating.stop()
+        s.saveHeatingTime()
+        s.io.airFunEnable(5000)
+
 
     def doWaiting(s):
         if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoom_t():
@@ -285,26 +370,10 @@ class Boiler():
             s.startHeating()
             return
 
-        if s.room_t >= s.targetRoom_t() and s.io.isWaterPumpEnabled():
-            diff_t = s.boiler_t - s.returnWater_t
-            if diff_t < 3:
-                s.log.info("water pump was STOPPED, boiler_t = %.1f, returnWater_t = %.1f" %
-                            (s.boiler_t, s.returnWater_t))
-                s.io.waterPumpDisable()
-            return
-
         if s.room_t >= s.targetRoom_t():
             if s._funHeaterEnable and not s._ioFunHeaterStopTriggering:
                 s.io.funHeaterEnable(30000)
                 s._ioFunHeaterStopTriggering = True
-
-
-    def stopHeating(s):
-        s.log.info("stop heating")
-        s.io.fuelPumpDisable()
-        s.tcHeating.stop()
-        s.saveHeatingTime()
-        s.io.airFunEnable(5000)
 
 
     def doHeating(s):
@@ -347,6 +416,7 @@ class Boiler():
         data['target_boiler_t_min'] = s.targetBoilerMin_t()
         data['total_heating_time'] = s.heatingTimeTotal()
         data['total_fuel_consumption'] = s.fuelConsumption()
+        data['total_energy_consumption'] = s.energyConsumption()
         data['ignition_counter'] = s.ignitionCounter()
 
         if s.state != "STOPPED":
@@ -423,6 +493,7 @@ class Boiler():
             str += "current heating time: %d sec\n" % s.tcHeating.time()
             str += "total heating time: %d sec\n" % s.heatingTimeTotal()
             str += "total fuel consumption: %.3f liters\n" % s.fuelConsumption()
+            str += "total energy consumption: %.3f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
             str += "fun heater: %s\n" % s.isFunHeaterEnabled()
 
@@ -431,3 +502,28 @@ class Boiler():
 
     def print(s):
         print(s.__str__())
+
+
+
+
+
+
+class Observ():
+    def __init__(s, condCb, enentCb):
+        s.condCb = condCb
+        s.enentCb = enentCb
+        s.state = None
+        s.first = True
+
+
+    def __call__(s):
+        val = s.condCb()
+        if s.first:
+            s.state = val
+            s.first = False
+            return
+
+        if val == s.state:
+            return
+        s.state = val
+        s.enentCb(val)

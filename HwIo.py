@@ -11,8 +11,8 @@ class HwIo():
         s._boilerTermo = TermoSensor("28-012033e26477", "boiler")
         s._retTermo = TermoSensor("28-012033e45839", "return_water")
         s._roomTermo = TermoSensor("28-012033f3fd8f", "room")
-        s._exhaustGasTermo = TermoSensor("28-012033f9c648", "boiler_inside")
-#        s._exhaustGasTermo = TermoSensor("28-012033f9c648", "exhaust_gas")
+        s._boilerInside = TermoSensor("28-012033f9c648", "boiler_inside")
+#        s._exhaustGasTermo = TermoSensor("28-012033f9c640", "exhaust_gas")
 
 
         s._gpioIn = {"overHearting": Gpio('over_heating', 8, 'in'),
@@ -52,8 +52,13 @@ class HwIo():
         return s._roomTermo.val()
 
 
+    def boilerInside_t(s):
+        return s._boilerInside.val()
+
+
     def exhaustGas_t(s):
-        return s._exhaustGasTermo.val()
+        return 0
+        #return s._exhaustGasTermo.val()
 
 
     def isOverHearting(s):
@@ -65,7 +70,6 @@ class HwIo():
 
 
     def isFlameBurning(s):
-       # return True
         return not bool(s._gpioIn['flameSensor'].value())
 
 
@@ -173,6 +177,7 @@ class HwIo():
         str = "Boiler temperature: %.1f\n" % s.boiler_t()
         str += "Return water temperature: %.1f\n" % s.retWater_t()
         str += "Room temperature: %.1f\n" % s.room_t()
+        str += "Boiler inside temperature: %.1f\n" % s.boilerInside_t()
         str += "Exchause Gas temperature: %.1f\n" % s.exhaustGas_t()
 
         str += "isOverHearting: %s\n" % s.isOverHearting()
