@@ -47,7 +47,7 @@ class Boiler():
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
-        s._checkDiffWater_t = Observ(lambda: s.boiler_t - s.returnWater_t, s.evDiffWater_t)
+        s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 1, s.evDiffWater_t, ignoreFirst=False)
 
 
         s.stopBoiler()
@@ -167,8 +167,8 @@ class Boiler():
         return
 
 
-    def evDiffWater_t(s, diff):
-        if diff > 1:
+    def evDiffWater_t(s, result):
+        if result:
             s.io.waterPumpEnable()
         else:
             s.io.waterPumpDisable()
@@ -315,7 +315,7 @@ class Boiler():
     def startHeating(s):
         if s.state != "WAITING":
             s.log.debug("can't start heating from '%s' state" % s.state)
-            return
+            return False
 
         s.log.info("start heating")
 
@@ -326,25 +326,36 @@ class Boiler():
         s.io.airFunEnable()
         Task.sleep(5000)
 
-        s.io.ignitionRelayEnable()
-        s.io.fuelPumpEnable()
-        Task.sleep(500)
-        success = False
-        if not s.fake:
-            for attempt in range(3):
-                if s.io.isFlameBurning():
-                    s.log.debug("flame is started at attempt %d" % attempt)
-                    success = True
-                    break
-                s.log.error("flame is not burning at attempt %d" % attempt)
-                Task.sleep(1000)
-            s.io.ignitionRelayDisable();
+        for attemptCnt in range(10):
+            s.io.ignitionRelayEnable()
+            s.io.fuelPumpEnable()
+            Task.sleep(500)
+            success = False
+            if not s.fake:
+                for attempt in range(3):
+                    if s.io.isFlameBurning():
+                        s.log.debug("flame is started at attempt %d" % attempt)
+                        success = True
+                        break
+                    s.log.error("flame is not burning at attempt %d" % attempt)
+                    Task.sleep(1000)
+                s.io.ignitionRelayDisable();
 
-        if not success and not s.fake:
-            s.log.error("can't burn flame")
+            if success:
+                break
+
+            if not success and not s.fake:
+                s.log.error("can't burn flame, attemptCnt: %d" % attemptCnt)
+                s.io.ignitionRelayDisable()
+                s.io.fuelPumpDisable()
+                s.telegram.send("Не удалось зажечь пламя, попытка: %d" % attemptCnt)
+                Task.sleep(3000)
+        else:
+            s.log.error("Can't start heating. All attempts were exhausted.")
+            s.telegram.send("Не удалось зажечь пламя, все попытки исчерпаны. Котёл остановлен.")
             s.stopBoiler()
-            s.telegram.send("Не удалось зажечь пламя, котёл остановлен")
-            return
+            return False
+
 
         if s._funHeaterEnable:
             s.io.funHeaterEnable()
@@ -354,6 +365,7 @@ class Boiler():
         with s.store.lock:
             s.store.tree['ignition_counter'] += 1
             s.store.save()
+        return True
 
 
     def stopHeating(s):
@@ -509,16 +521,17 @@ class Boiler():
 
 
 class Observ():
-    def __init__(s, condCb, enentCb):
+    def __init__(s, condCb, enentCb, ignoreFirst=True):
         s.condCb = condCb
         s.enentCb = enentCb
         s.state = None
         s.first = True
+        s.ignoreFirst = ignoreFirst
 
 
     def __call__(s):
         val = s.condCb()
-        if s.first:
+        if s.first and s.ignoreFirst:
             s.state = val
             s.first = False
             return
@@ -527,3 +540,4 @@ class Observ():
             return
         s.state = val
         s.enentCb(val)
+

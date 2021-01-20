@@ -87,7 +87,8 @@ class Gpio():
                 s.log.debug('cancel setValueTimeout')
                 s._timeoutTask.stop()
                 s._timeoutTask.remove()
-                s._timeoutTask.waitForRemoved()
+                #s._timeoutTask.waitForRemoved()
+                Task.sleep(2000) #TODO
                 s._timeoutTask = None
 
         if s._fake:
@@ -128,10 +129,14 @@ class Gpio():
                 s._timeoutTask = None
 
         def timeout():
-            s.setValue(val)
-            s.log.info("set to value '%d' by timeout: %d mS" % (val, interval))
+            if s._fake:
+                s.setValueFake(val)
+            else:
+                s.setValueReal(val)
+
             with s._lock:
                 s._timeoutTask = None
+            s.log.info("set to value '%d' by timeout: %d mS" % (val, interval))
 
         task = Task.setTimeout('gpio_%s_%dmS' % (s._name, interval), interval, timeout)
         with s._lock:
