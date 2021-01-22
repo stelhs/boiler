@@ -10,10 +10,10 @@ boiler = Boiler()
 def s():
     boiler.io.waterPumpEnable()
     boiler.io.airFunEnable()
-    Task.sleep(2000)
     boiler.io.ignitionRelayEnable()
+    Task.sleep(2000)
     boiler.io.fuelPumpEnable()
-    Task.sleep(1000)
+    Task.sleep(5000)
     boiler.io.ignitionRelayDisable()
 
 
@@ -21,7 +21,13 @@ def s():
 
 def e():
     boiler.io.fuelPumpDisable()
-    boiler.io.airFunDisable()
     boiler.io.ignitionRelayDisable()
+    Task.sleep(20000)
+    boiler.io.airFunDisable()
 
+
+def p():
+    while 1:
+        boiler.io.print()
+        Task.sleep(1000)
 

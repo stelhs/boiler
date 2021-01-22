@@ -37,7 +37,7 @@ class Boiler():
         s.httpServer.setReqCb("GET", "/boiler/enable_fun_heater", s.httpReqEnableFunHeater)
         s.httpServer.setReqCb("GET", "/boiler/disable_fun_heater", s.httpReqDisableFunHeater)
         s.io.setFunHeaterButtonCb(s.buttonFunHeaterCb)
-        s.io.setHwEnableCb(s.hwEnableCb)
+#        s.io.setHwEnableCb(s.hwEnableCb)
         s.lowReturnWater = False
 
         s._funHeaterEnable = False
@@ -312,10 +312,63 @@ class Boiler():
         s.state = "STOPPED"
 
 
-    def startHeating(s):
-        if s.state != "WAITING":
-            s.log.debug("can't start heating from '%s' state" % s.state)
+    def startBurning(s):
+        s.log.info("start burning procedure")
+        s.io.airFunEnable()
+
+        for attemptCnt in range(50):
+            Task.sleep(15000)
+
+            s.io.ignitionRelayEnable()
+            s.io.fuelPumpEnable()
+            Task.sleep(500)
+
+            success = False
+            for attempt in range(6):
+                if s.io.isFlameBurning():
+                    success = True
+                    s.log.debug("flame is first burn")
+                    break
+                Task.sleep(500)
+            s.io.ignitionRelayDisable();
+
+            if not success:
+                s.log.error("can't first burn, attemptCnt: %d" % attemptCnt)
+                s.io.fuelPumpDisable()
+                Task.sleep(15000)
+                continue
+
+            s.log.info("Waiting flame stabilization")
+            success = False
+            for attempt in range(60):
+                if s.io.isFlameBurning():
+                    Task.sleep(500)
+                    continue
+
+                s.log.error("Can't stabilization: the flame went out, attemptCnt: %d" % attemptCnt)
+                s.io.fuelPumpDisable()
+                Task.sleep(15000)
+                break
+            else:
+                s.log.info("The flame was stabilizated")
+                return True
+
+        else:
+            s.log.error("Can't start heating. All attempts were exhausted.")
+            s.telegram.send("Не удалось зажечь пламя, все попытки исчерпаны. Котёл остановлен.")
+            s.io.fuelPumpDisable()
+            s.io.airFunDisable()
             return False
+
+
+
+    def startHeating(s):
+        if s.fake:
+            return True
+
+  #      if s.state != "WAITING":
+   #         s.log.debug("can't start heating from '%s' state" % s.state)
+    #        return False
 
         s.log.info("start heating")
 
@@ -323,42 +376,15 @@ class Boiler():
             s.log.info("flame is burning, heating already started")
             return False
 
-        s.io.airFunEnable()
-        Task.sleep(5000)
 
-        for attemptCnt in range(10):
-            s.io.ignitionRelayEnable()
-            s.io.fuelPumpEnable()
-            Task.sleep(500)
-            success = False
-            if not s.fake:
-                for attempt in range(3):
-                    if s.io.isFlameBurning():
-                        s.log.debug("flame is started at attempt %d" % attempt)
-                        success = True
-                        break
-                    s.log.error("flame is not burning at attempt %d" % attempt)
-                    Task.sleep(1000)
-                s.io.ignitionRelayDisable();
-
-            if success:
-                break
-
-            if not success and not s.fake:
-                s.log.error("can't burn flame, attemptCnt: %d" % attemptCnt)
-                s.io.ignitionRelayDisable()
-                s.io.fuelPumpDisable()
-                s.telegram.send("Не удалось зажечь пламя, попытка: %d" % attemptCnt)
-                Task.sleep(3000)
-        else:
-            s.log.error("Can't start heating. All attempts were exhausted.")
-            s.telegram.send("Не удалось зажечь пламя, все попытки исчерпаны. Котёл остановлен.")
-            s.stopBoiler()
-            return False
+        s.startBurning(s)
+        Task.sleep(3000)
 
 
         if s._funHeaterEnable:
             s.io.funHeaterEnable()
+
+        s.log.info("flame is burning!!!")
 
         s.state = "HEATING"
         s.tcHeating.start()
@@ -416,7 +442,8 @@ class Boiler():
         if not s.io.isFlameBurning():
             s.log.error("the flame went out!")
             s.telegram.send("Пламя в котле самопроизвольно погасло!")
-            s.tcHeating.stop()
+            s.stopHeating()
+            Task.sleep(3000)
             s.state = "WAITING"
             return False
 
