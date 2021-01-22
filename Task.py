@@ -18,13 +18,18 @@ class Task():
     cb = None
     log = Syslog("task")
     lastId = 0
+    tasksLock = threading.Lock()
 
     def __init__(s, name):
         s._name = name
+        s._msgQueue = []
 
         if Task.taskByName(name):
             raise Exception("Task with name '%s' is existed" % name)
-        s.listTasks.append(s)
+
+        with Task.tasksLock:
+            s.listTasks.append(s)
+
         s.log = Syslog("task_%s" % name)
         s.telegram = Telegram("task_%s" % name)
         s.log.debug("created")
@@ -32,13 +37,48 @@ class Task():
         with s._lock:
             Task.lastId += 1
             s._id = Task.lastId
+            s._alive = False
+
+
+    def iAmAlive(s):
+        with s._lock:
+            s._alive = True
+
+
+    def checkForAlive(s):
+        with s._lock:
+            s._alive = False
+
+
+    def isAlived(s):
+        with s._lock:
+            return s._alive
+
+
+    def setFreezed(s):
+        s.setState("freezed")
+
+
+    def sendMessage(s, msg):
+        with s._lock:
+            s._msgQueue.append(msg)
+
+
+    def message(s):
+        with s._lock:
+            if not len(s._msgQueue):
+                return None
+
+            msg = s._msgQueue[0]
+            s._msgQueue.remove(s._msgQueue[0])
+            return msg
 
 
     def start(s):
         s.log.info("start")
         t = threading.Thread(target=s.thread, daemon=True, args=(s._name, ))
         t.start()
-        s._state = "running"
+        s.setState("running")
 
 
     def setCb(s, cb, args = None):
@@ -64,48 +104,44 @@ class Task():
             print("Task '%s' Exception:\n%s" % (s._name, trace))
             s.telegram.send("stopped by exception: %s" % trace)
 
-        with s._lock:
-            s._state = "stopped"
+        s.setState("stopped")
 
-            if s._removing:
-                s.log.info("removed")
+        if s._removing:
+            s.setState("removed")
+            s.log.info("removed by flag")
+            with Task.tasksLock:
                 Task.listTasks.remove(s)
-                s._state == "removed"
-                s.log.info("removed")
 
 
     def stop(s):
-        with s._lock:
-            if s._state != "running":
-                return
-            s.log.info("stoping")
-
-            s._state = "stopping"
+        if s.state() != "running":
+            return
+        s.log.info("stopping")
+        s.setState("stopping")
 
 
     def pause(s):
-        with s._lock:
-            s.log.info("paused")
-            s._state = "paused"
+        s.log.info("paused")
+        s.setState("paused")
 
 
     def resume(s):
-        with s._lock:
-            if s._state != "paused":
-                return
-            s.log.info("resumed")
-            s._state = "running"
+        if s.state() != "paused":
+            return
+        s.log.info("resumed")
+        s.setState("running")
 
 
     def remove(s):
-        with s._lock:
-            if s._state == "stopped":
+        if s.state() == "stopped":
+            with Task.tasksLock:
                 Task.listTasks.remove(s)
-                s._state == "removed"
-                s.log.info("removed")
-                return
+            s.setState("removed")
+            s.log.info("removed")
+            return
 
-            s.log.info("removing")
+        s.log.info("removing")
+        with s._lock:
             s._removing = True
 
 
@@ -121,33 +157,75 @@ class Task():
         return s._tid
 
 
-    def waitForRemoved(s):
+    def setState(s, state):
+        with s._lock:
+            s._state = state
+            s.log.info("set state %s" % state)
+
+
+    def state(s):
+        with s._lock:
+            return s._state
+
+
+    def waitForRemoved(s): #TODO !!
         while 1:
-            if s._state == "removed":
+            if s.state() == "removed":
                 return
             s.sleep(100)
 
+
+    @staticmethod
+    def doObserveTasks():
+        ot = Task.observeTask
+        while 1:
+            with Task.tasksLock:
+                for t in Task.listTasks:
+                    if t.state() == "running":
+                        t.checkForAlive()
+
+            Task.sleep(4000)
+            with Task.tasksLock:
+                for t in Task.listTasks:
+                    if t.state() != "running":
+                        continue
+                    if not t.isAlived():
+                        t.setFreezed()
+                        ot.log.info("task %d:%s is freezed" % (t.id(), t.name()))
+                        ot.telegram.send("task %d:%s is freezed. Task stopped." % (t.id(), t.name()))
+
+
+    @staticmethod
+    def runObserveTasks():
+        Task.observeTask = Task("observe")
+        Task.observeTask.setCb(Task.doObserveTasks)
+        Task.observeTask.start()
+
+
     @staticmethod
     def taskById(id):
-        for t in Task.listTasks:
-            if t.id() == id:
-                return t
+        with Task.tasksLock:
+            for t in Task.listTasks:
+                if t.id() == id:
+                    return t
         return None
 
 
     @staticmethod
     def taskByTid(tid):
-        for t in Task.listTasks:
-            if t.tid() == tid:
-                return t
+        with Task.tasksLock:
+            for t in Task.listTasks:
+                if t.tid() == tid:
+                    return t
         return None
 
 
     @staticmethod
     def taskByName(name):
-        for t in Task.listTasks:
-            if t.name() == name:
-                return t
+        with Task.tasksLock:
+            for t in Task.listTasks:
+                if t.name() == name:
+                    return t
         return None
 
 
@@ -161,10 +239,11 @@ class Task():
 
         t = interval
         while (1):
-            if task._state == "stopping":
+            task.iAmAlive()
+            if task.state() == "stopping":
                 raise TaskStopException
 
-            while(task._state == "paused"):
+            while(task.state() == "paused"):
                 time.sleep(1/10)
 
             if t >= 100:
@@ -176,7 +255,7 @@ class Task():
 
 
     def __str__(s):
-        str = "task %d %s/%s" % (s._id, s._name, s._state)
+        str = "task %d:%s/%s" % (s._id, s._name, s.state())
         if s._removing:
             str += ":removing"
         return str
@@ -200,6 +279,9 @@ class Task():
 
     @staticmethod
     def printList():
-        for tsk in Task.listTasks:
-            print("%s" % tsk)
+        with Task.tasksLock:
+            for tsk in Task.listTasks:
+                print("%s" % tsk)
+
+
 

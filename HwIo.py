@@ -98,7 +98,11 @@ class HwIo():
     def airFunEnable(s, timeout = 0):
         g = s._gpioOut['airFun']
         g.setValue(1)
-        s.log.info('air fun enable')
+        if timeout:
+            s.log.info('air fun enable, timeout = %d' % timeout)
+        else:
+            s.log.info('air fun enable')
+
         if timeout:
             s.log.info('air fun disabled by timeout %dmS' % timeout)
             g.setValueTimeout(0, timeout)
