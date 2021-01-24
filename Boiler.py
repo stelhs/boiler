@@ -598,10 +598,10 @@ class Boiler():
             str += "target boiler t min: %.1f\n" % s.targetBoilerMin_t()
             str += "current boiler t: %.1f\n" % s.boiler_t
             str += "current return water t: %.1f\n" % s.returnWater_t
-            str += "target room t: %.1f\n" % s.targetRoom_t()
+            str += "target room t: %.1f - %.1f\n" % (s.targetRoomMin_t(), s.targetRoomMax_t())
             str += "current room t: %.1f\n" % s.room_t
-            str += "current heating time: %d sec\n" % s.tcHeating.time()
-            str += "total heating time: %d sec\n" % s.heatingTimeTotal()
+            str += "current heating time: %s\n" % timeStr(s.tcHeating.time())
+            str += "total heating time: %s\n" % timeStr(s.heatingTimeTotal())
             str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
