@@ -225,6 +225,16 @@ class Boiler():
             return float(s.store.tree['target_room_t'])
 
 
+    def targetRoomMax_t(s):
+        with s.store.lock:
+            return float(s.store.tree['target_room_t']) + 0.5
+
+
+    def targetRoomMin_t(s):
+        with s.store.lock:
+            return float(s.store.tree['target_room_t'])
+
+
     def setTargetRoom_t(s, t):
         with s.store.lock:
             s.store.tree['target_room_t'] = str(t)
@@ -281,6 +291,7 @@ class Boiler():
 
     def saveHeatingTime(s):
         heatingTime = s.tcHeating.time()
+        s.tcHeating.reset()
         if heatingTime:
             with s.store.lock:
                 s.store.tree['heating_time'] += heatingTime
@@ -347,7 +358,7 @@ class Boiler():
             Task.sleep(500)
 
             success = False
-            for attempt in range(6):
+            for attempt in range(12):
                 if s.io.isFlameBurning():
                     success = True
                     s.log.debug("flame is first burn")
@@ -439,14 +450,14 @@ class Boiler():
 
 
     def doWaiting(s):
-        if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoom_t():
+        if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoomMin_t():
             s._ioFunHeaterStopTriggering = False
             s.startHeating()
             return
 
         s._checkFlameSensor()
 
-        if s.room_t >= s.targetRoom_t():
+        if s.room_t >= s.targetRoomMax_t():
             if s._funHeaterEnable and not s._ioFunHeaterStopTriggering:
                 s.io.funHeaterEnable(30000)
                 s._ioFunHeaterStopTriggering = True
@@ -464,10 +475,10 @@ class Boiler():
             return
 
 
-        if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoom_t():
+        if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoomMax_t():
             s.stopHeating()
             s.setState("WAITING")
-            if s.room_t < s.targetRoom_t() and s.tcHeating.time() < 60:
+            if s.room_t < s.targetRoomMin_t() and s.tcHeating.time() < 60:
                 s.tcHeating.stop()
                 s.stop()
                 s.log.error("The boiler has reached the temperature %.1f "
@@ -495,6 +506,14 @@ class Boiler():
     def state(s):
         with s.lock:
             return s._state
+
+
+    def resetStatistics(s):
+        s.tcHeating.reset()
+        with s.store.lock:
+            s.store.tree['heating_time'] = 0
+            s.store.tree['ignition_counter'] = 0
+            s.store.save()
 
 
     def httpReqStat(s, args, body):
@@ -580,8 +599,8 @@ class Boiler():
             str += "current room t: %.1f\n" % s.room_t
             str += "current heating time: %d sec\n" % s.tcHeating.time()
             str += "total heating time: %d sec\n" % s.heatingTimeTotal()
-            str += "total fuel consumption: %.3f liters\n" % s.fuelConsumption()
-            str += "total energy consumption: %.3f kW*h\n" % s.energyConsumption()
+            str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
+            str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
             str += "fun heater: %s\n" % s.isFunHeaterEnabled()
 

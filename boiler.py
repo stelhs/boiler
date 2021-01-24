@@ -31,3 +31,8 @@ def p():
         boiler.io.print()
         Task.sleep(1000)
 
+
+def bp():
+    while 1:
+        boiler.print()
+        Task.sleep(1000)
