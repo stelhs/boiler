@@ -476,17 +476,20 @@ class Boiler():
 
 
         if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoomMax_t():
-            s.stopHeating()
-            s.setState("WAITING")
-            if s.room_t < s.targetRoomMin_t() and s.tcHeating.time() < 60:
-                s.tcHeating.stop()
-                s.stop()
+            if s.room_t < s.targetRoomMin_t() and s.tcHeating.time() < 20:
                 s.log.error("The boiler has reached the temperature %.1f "
                             "is very too quickly" % s.targetBoilerMax_t())
                 s.telegram.send("Котёл набрал температуру до %.1f градусов "
                                 "слишком быстро (за %d секунд), "
                                 "Котёл остановлен." % (s.targetBoilerMax_t(),
                                                        s.tcHeating.time()))
+                s.tcHeating.stop()
+                s.stop()
+                return
+
+            s.stopHeating()
+            s.setState("WAITING")
+            return
 
         if not s.io.isFlameBurning():
             s.setState("WAITING")
