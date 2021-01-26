@@ -181,7 +181,7 @@ class Boiler():
         if result:
             s.io.waterPumpEnable()
         else:
-            s.io.waterPumpDisable()
+            s.io.waterPumpEnable(60000 * 10)
 
 
     def evFlameSensorCheck(s, state):
@@ -358,7 +358,7 @@ class Boiler():
             Task.sleep(500)
 
             success = False
-            for attempt in range(12):
+            for attempt in range(16):
                 if s.io.isFlameBurning():
                     success = True
                     s.log.debug("flame is first burn")
@@ -445,7 +445,7 @@ class Boiler():
         s.io.fuelPumpDisable()
         s.tcHeating.stop()
         s.saveHeatingTime()
-        s.io.airFunEnable(5000)
+        s.io.airFunEnable(30000)
         s.log.info("stop heating")
 
 
