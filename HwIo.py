@@ -74,7 +74,7 @@ class HwIo():
 
 
     def isPressureNormal(s):
-        return not bool(s._gpioIn['pressureSensor'].value())
+        return bool(s._gpioIn['pressureSensor'].value())
 
 
     def waterPumpEnable(s, timeout = 0):
