@@ -348,9 +348,8 @@ class Boiler():
             s.log.info("the flame was stabilizated")
             return True
 
-        s.io.airFunEnable()
-
         for attemptCnt in range(10):
+            s.io.airFunEnable()
             Task.sleep(15000)
 
             s.io.ignitionRelayEnable()
