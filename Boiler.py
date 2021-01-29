@@ -227,12 +227,12 @@ class Boiler():
 
     def targetRoomMax_t(s):
         with s.store.lock:
-            return float(s.store.tree['target_room_t']) + 0.5
+            return float(s.store.tree['target_room_t'])
 
 
     def targetRoomMin_t(s):
         with s.store.lock:
-            return float(s.store.tree['target_room_t'])
+            return float(s.store.tree['target_room_t']) - 0.5
 
 
     def setTargetRoom_t(s, t):
