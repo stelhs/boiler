@@ -5,9 +5,10 @@ from Syslog import *
 from Telegram import *
 from HttpServer import *
 from TimeCounter import *
+from Integrator import *
 import threading
 import json
-
+import datetime
 
 
 class Boiler():
@@ -30,7 +31,7 @@ class Boiler():
         s.task = Task('boiler')
         s.task.setCb(s.doTask)
         s.telegram = Telegram('boiler')
-        s.httpServer = HttpServer('127.0.0.1', 8890)
+        s.httpServer = HttpServer('0.0.0.0', 8890)
         s.httpServer.setReqCb("GET", "/boiler", s.httpReqStat)
         s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup)
         s.httpServer.setReqCb("GET", "/boiler/start", s.httpReqStart)
@@ -52,6 +53,11 @@ class Boiler():
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
         s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 1, s.evDiffWater_t, ignoreFirst=False)
         s._checkFlameSensor = Observ(lambda: s.io.isFlameBurning(), s.evFlameSensorCheck)
+        s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
+        s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
+
+        s._room_tIntegrator = Integrator()
+        s._retWater_tIntegrator = Integrator()
 
         s.task.start()
         s.telegram.send('Котёл перезапущен')
@@ -122,9 +128,10 @@ class Boiler():
                 if errCnt > 5:
                     s.stop()
                     s.telegram.send("Датчики температур не работают: %s, Котёл остановлен" % e.args[1])
+                    errCnt = 0
 
                 errCnt += 1
-                Task.sleep(500)
+                Task.sleep(1000)
                 continue
 
             s._checkOverHeating()
@@ -132,6 +139,8 @@ class Boiler():
             s._checkWaterPressure()
             s._checkDiffWater_t()
             s.checkTermoSensors()
+            s._hour()
+            s._minute()
 
             if s.state() == "WAITING":
                 s.doWaiting()
@@ -189,6 +198,44 @@ class Boiler():
             s.telegram.send("Ошибка датчика пламени. Он сигнализирует, что пламя есть "
                             "в то время как его быть недолжно. Котёл остановлен.")
             s.stop()
+
+
+    def evHourTick(s, hour):
+        overageRoom_t = s._room_tIntegrator.overage()
+        overageRetWater_t = s._retWater_tIntegrator.overage()
+
+        s._room_tIntegrator.reset()
+        s._retWater_tIntegrator.reset()
+
+        with s.store.lock:
+            s.store.tree['overage_room_t'][hour] = overageRoom_t
+            s.store.tree['overage_return_water_t'][hour] = overageRetWater_t
+            s.store.save()
+
+
+    def evMinuteTick(s, minute):
+        s._room_tIntegrator.add(s.room_t)
+        s._retWater_tIntegrator.add(s.returnWater_t)
+
+
+    def room_tOverage(s):
+        with s.store.lock:
+            queue = list(s.store.tree['overage_room_t'].values())
+
+        it = Integrator()
+        it.addQueue(queue)
+        it.add(s._room_tIntegrator.overage())
+        return it.overage()
+
+
+    def returnWater_tOverage(s):
+        with s.store.lock:
+            queue = list(s.store.tree['overage_return_water_t'].values())
+
+        it = Integrator()
+        it.addQueue(queue)
+        it.add(s._retWater_tIntegrator.overage())
+        return it.overage()
 
 
     def checkTermoSensors(s):
@@ -514,6 +561,8 @@ class Boiler():
         with s.store.lock:
             s.store.tree['burning_time'] = 0
             s.store.tree['ignition_counter'] = 0
+            s.store.tree['overage_room_t'] = {}
+            s.store.tree['overage_return_water_t'] = {}
             s.store.save()
 
 
@@ -526,6 +575,9 @@ class Boiler():
         data['total_fuel_consumption'] = s.fuelConsumption()
         data['total_energy_consumption'] = s.energyConsumption()
         data['ignition_counter'] = s.ignitionCounter()
+        data['overage_room_t'] = s.room_tOverage()
+        data['overage_return_water_t'] = s.returnWater_tOverage()
+
 
         if s.state() != "STOPPED":
             data['current_boiler_t'] = s.boiler_t
@@ -558,8 +610,7 @@ class Boiler():
     def httpReqStart(s, args, body):
         rc = s.start()
         if not rc:
-            return json.dumps({"status": "error",
-                               "reason": "boiler already was started"})
+            return json.dumps({"status": "error"})
         s.telegram.send('Котёл запущен по REST запросу')
         return json.dumps({"status": "ok"})
 
@@ -604,6 +655,8 @@ class Boiler():
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
             str += "fun heater: %s\n" % s.isFunHeaterEnabled()
+            str += "overage room t: %.1f\n" % s.room_tOverage()
+            str += "overage return water t: %.1f\n" % s.returnWater_tOverage()
 
         return str
 

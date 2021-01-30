@@ -8,8 +8,10 @@ class Store():
     tree = {"target_room_t": "18",
             "target_boiler_min_t": "60",
             "target_boiler_max_t": "80",
-            "heating_time": 0,
+            "burning_time": 0,
             "ignition_counter": 0,
+            "overage_room_t": {},
+            "overage_return_water_t": {},
             }
     storeFile = "store.js"
 

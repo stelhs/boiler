@@ -56,12 +56,22 @@ class HttpConnection():
                     continue
 
                 data = s._conn.recv(65535)
-                if not data:
+                if (not data) or (not len(data)):
                     s._task.remove()
                     return
 
-                req = data.decode()
-                method, url, version, attrs, body = s.parseHttpReq(req)
+                try:
+                    req = data.decode()
+                except:
+                    s._task.remove()
+                    return
+
+                parts = s.parseHttpReq(req)
+                if not parts:
+                    s._task.remove()
+                    return
+
+                method, url, version, attrs, body = parts
                 s.log.info("%s %s" % (method, url))
 
                 page, args = s.parseUrl(url)
@@ -95,7 +105,17 @@ class HttpConnection():
             body = parts[1]
 
         lines = header.split("\n")
-        method, url, version = lines[0].split()
+        if not len(lines):
+            return None
+
+        if not len(lines):
+            return None
+
+        parts = lines[0].split()
+        if len(parts) < 2:
+            return None
+
+        method, url, version = parts
 
         attrs = {}
         for line in lines[1:]:
