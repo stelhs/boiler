@@ -46,7 +46,7 @@ class Boiler():
         s._ioFunHeaterStopTriggering = False
         s._ignitTask = None
 
-        s.tcHeating = TimeCounter('heating_time')
+        s.tcBurning = TimeCounter('burning_time')
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
@@ -269,18 +269,18 @@ class Boiler():
         s.io.mainPowerRelayDisable()
 
 
-    def heatingTimeTotal(s):
+    def burningTimeTotal(s):
         with s.store.lock:
-            return s.store.tree['heating_time']
+            return s.store.tree['burning_time']
 
 
     def fuelConsumption(s):
-        heatingTime = s.heatingTimeTotal()
-        return heatingTime * 4.65 / 3600
+        heatingTime = s.burningTimeTotal()
+        return heatingTime * 4.925 / 3600
 
 
     def energyConsumption(s):
-        heatingTime = s.heatingTimeTotal()
+        heatingTime = s.burningTimeTotal()
         return heatingTime * 40 / 3600
 
 
@@ -290,11 +290,11 @@ class Boiler():
 
 
     def saveHeatingTime(s):
-        heatingTime = s.tcHeating.time()
-        s.tcHeating.reset()
-        if heatingTime:
+        burningTime = s.tcBurning.time()
+        s.tcBurning.reset()
+        if burningTime:
             with s.store.lock:
-                s.store.tree['heating_time'] += heatingTime
+                s.store.tree['burning_time'] += burningTime
                 s.store.save()
 
 
@@ -330,7 +330,7 @@ class Boiler():
 
         s.io.ignitionRelayDisable()
         s.io.funHeaterDisable()
-        s.tcHeating.stop()
+        s.tcBurning.stop()
         s.saveHeatingTime()
         if s.io.isAirFunEnabled():
             s.io.airFunEnable(10000)
@@ -371,6 +371,7 @@ class Boiler():
                 Task.sleep(15000)
                 continue
 
+            s.tcBurning.start()
             s.log.info("Waiting flame stabilization")
             success = False
             for attempt in range(30):
@@ -392,6 +393,7 @@ class Boiler():
             s.io.airFunDisable()
             s.log.error("Can't start heating. All attempts were exhausted.")
             s.telegram.send("Не удалось зажечь пламя, все попытки исчерпаны.")
+            s.tcBurning.reset()
             return False
 
 
@@ -403,7 +405,6 @@ class Boiler():
             return
 
         s.setState("HEATING")
-        s.tcHeating.start()
         with s.store.lock:
             s.store.tree['ignition_counter'] += 1
             s.store.save()
@@ -442,7 +443,7 @@ class Boiler():
     def stopHeating(s):
         s.stopIgnitFlameTask()
         s.io.fuelPumpDisable()
-        s.tcHeating.stop()
+        s.tcBurning.stop()
         s.saveHeatingTime()
         s.io.airFunEnable(30000)
         s.log.info("stop heating")
@@ -463,26 +464,24 @@ class Boiler():
 
 
     def doHeating(s):
-        if s.tcHeating.time() > 10 * 60 and s.boiler_t < 30:
-            s.tcHeating.stop()
+        if s.tcBurning.time() > 10 * 60 and s.boiler_t < 30:
             s.stop()
             s.log.error("Boiler stopped by timeout. boiler t: %.1f, "
-                        "heating time: %d" % (s.boiler_t, s.tcHeating.time()))
+                        "heating time: %d" % (s.boiler_t, s.tcBurning.time()))
             s.telegram.send("Котёл работает более %d секунд а температура в котле "
                             "так и не превысила 30 градусов. "
-                            "Котёл остановлен." % s.tcHeating.time())
+                            "Котёл остановлен." % s.tcBurning.time())
             return
 
 
         if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoomMax_t():
-            if s.room_t < s.targetRoomMin_t() and s.tcHeating.time() < 20:
+            if s.room_t < s.targetRoomMin_t() and s.tcBurning.time() < 20:
                 s.log.error("The boiler has reached the temperature %.1f "
                             "is very too quickly" % s.targetBoilerMax_t())
                 s.telegram.send("Котёл набрал температуру до %.1f градусов "
                                 "слишком быстро (за %d секунд), "
                                 "Котёл остановлен." % (s.targetBoilerMax_t(),
-                                                       s.tcHeating.time()))
-                s.tcHeating.stop()
+                                                       s.tcBurning.time()))
                 s.stop()
                 return
 
@@ -511,9 +510,9 @@ class Boiler():
 
 
     def resetStatistics(s):
-        s.tcHeating.reset()
+        s.tcBurning.reset()
         with s.store.lock:
-            s.store.tree['heating_time'] = 0
+            s.store.tree['burning_time'] = 0
             s.store.tree['ignition_counter'] = 0
             s.store.save()
 
@@ -523,7 +522,7 @@ class Boiler():
         data['state'] = s.state()
         data['target_boiler_t_max'] = s.targetBoilerMax_t()
         data['target_boiler_t_min'] = s.targetBoilerMin_t()
-        data['total_heating_time'] = s.heatingTimeTotal()
+        data['total_burning_time'] = s.burningTimeTotal()
         data['total_fuel_consumption'] = s.fuelConsumption()
         data['total_energy_consumption'] = s.energyConsumption()
         data['ignition_counter'] = s.ignitionCounter()
@@ -533,7 +532,7 @@ class Boiler():
             data['current_return_water_t'] = s.returnWater_t
             data['target_room_t'] = s.targetRoom_t()
             data['current_room_t'] = s.room_t
-            data['current_heating_time'] = s.tcHeating.time()
+            data['current_burning_time'] = s.tcBurning.time()
             data['fun_heater_is_enabled'] = s.isFunHeaterEnabled()
 
         return json.dumps(data)
@@ -599,8 +598,8 @@ class Boiler():
             str += "current return water t: %.1f\n" % s.returnWater_t
             str += "target room t: %.1f - %.1f\n" % (s.targetRoomMin_t(), s.targetRoomMax_t())
             str += "current room t: %.1f\n" % s.room_t
-            str += "current heating time: %s\n" % timeStr(s.tcHeating.time())
-            str += "total heating time: %s\n" % timeStr(s.heatingTimeTotal())
+            str += "current burning time: %s\n" % timeStr(s.tcBurning.time())
+            str += "total burning time: %s\n" % timeStr(s.burningTimeTotal())
             str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()

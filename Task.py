@@ -27,9 +27,6 @@ class Task():
         if Task.taskByName(name):
             raise Exception("Task with name '%s' is existed" % name)
 
-        with Task.tasksLock:
-            s.listTasks.append(s)
-
         s.log = Syslog("task_%s" % name)
         s.telegram = Telegram("task_%s" % name)
         s.log.debug("created")
@@ -38,6 +35,9 @@ class Task():
             Task.lastId += 1
             s._id = Task.lastId
             s._alive = False
+
+        with Task.tasksLock:
+            s.listTasks.append(s)
 
 
     def iAmAlive(s):
