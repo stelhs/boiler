@@ -68,6 +68,10 @@ class TermoSensor():
         return float(fileGetContent(s._fileName))
 
 
+    def devName(s):
+        return s._devName
+
+
     def __str__(s):
         return "%s, TermoSensor %s/%s, temperature: %.1f" % (
                     super().__str__(), s._name, s._devName, s.val())

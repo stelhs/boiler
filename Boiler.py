@@ -8,6 +8,7 @@ from TimeCounter import *
 from Integrator import *
 import threading
 import json
+import os, re
 import datetime
 
 
@@ -33,6 +34,8 @@ class Boiler():
         s.telegram = Telegram('boiler')
         s.httpServer = HttpServer('0.0.0.0', 8890)
         s.httpServer.setReqCb("GET", "/boiler", s.httpReqStat)
+        s.httpServer.setReqCb("GET", "/stat", s.httpReqSbioStat)
+        s.httpServer.setReqCb("GET", "/boiler/reset_stat", s.httpReqResetStat)
         s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup)
         s.httpServer.setReqCb("GET", "/boiler/start", s.httpReqStart)
         s.httpServer.setReqCb("GET", "/boiler/stop", s.httpReqStop)
@@ -572,6 +575,7 @@ class Boiler():
         data['target_boiler_t_max'] = s.targetBoilerMax_t()
         data['target_boiler_t_min'] = s.targetBoilerMin_t()
         data['total_burning_time'] = s.burningTimeTotal()
+        data['total_burning_time_text'] = timeStr(s.burningTimeTotal())
         data['total_fuel_consumption'] = s.fuelConsumption()
         data['total_energy_consumption'] = s.energyConsumption()
         data['ignition_counter'] = s.ignitionCounter()
@@ -588,6 +592,33 @@ class Boiler():
             data['fun_heater_is_enabled'] = s.isFunHeaterEnabled()
 
         return json.dumps(data)
+
+
+    def httpReqSbioStat(s, args, body):
+        f = os.popen('uptime')
+        c = f.read()
+        f.close()
+        uptime = re.search(r'up (.+?),', c).group(1)
+
+        termoSensors = []
+        tList = [s.io._boilerTermo, s.io._retTermo, s.io._roomTermo, s.io._boilerInside]
+        for sensor in tList:
+            termoSensors.append({'name': sensor.devName(),
+                                 'temperature': sensor.val()})
+
+        data = {}
+        data['status'] = 'ok'
+        data['error_msg'] = ''
+        data['uptime'] = uptime
+        data['status'] = 'ok'
+        data['termo_sensors'] = termoSensors
+        return json.dumps(data)
+
+
+    def httpReqResetStat(s, args, body):
+        s.resetStatistics()
+        s.log.debug('reset statistics by http request')
+        return json.dumps({"status": "ok"})
 
 
     def httpReqSutup(s, args, body):
