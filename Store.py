@@ -12,6 +12,7 @@ class Store():
             "ignition_counter": 0,
             "overage_room_t": {},
             "overage_return_water_t": {},
+            "enabled" : "0",
             }
     storeFile = "store.js"
 

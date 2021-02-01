@@ -16,6 +16,7 @@ class Boiler():
     # states:
     #   STOPPED
     #   WAITING
+    #   IGNITING
     #   HEATING
     _state = "STOPPED"
 
@@ -62,10 +63,19 @@ class Boiler():
         s._room_tIntegrator = Integrator()
         s._retWater_tIntegrator = Integrator()
 
+        s.io.ignitionRelayDisable()
+        s.io.funHeaterDisable()
+        s.io.fuelPumpDisable()
+
         s.task.start()
         s.telegram.send('Котёл перезапущен')
         Task.runObserveTasks()
-        s.stop()
+
+        with s.store.lock:
+            enabled = s.store.tree['enabled']
+        if enabled:
+            s.enableMainPower()
+            s.start()
 
 
     def funHeaterEnable(s):
@@ -282,7 +292,7 @@ class Boiler():
 
     def targetRoomMin_t(s):
         with s.store.lock:
-            return float(s.store.tree['target_room_t']) - 0.5
+            return float(s.store.tree['target_room_t']) - 1
 
 
     def setTargetRoom_t(s, t):
@@ -361,6 +371,9 @@ class Boiler():
             s.log.error("Can't start boiler, No water pressure")
             return False
 
+        with s.store.lock:
+            s.store.tree['enabled'] = 1
+            s.store.save()
 
         s.setState("WAITING")
         s.log.info("boiler started")
@@ -386,6 +399,10 @@ class Boiler():
             s.io.airFunEnable(10000)
         else:
             s.io.airFunDisable()
+
+        with s.store.lock:
+            s.store.tree['enabled'] = 0
+            s.store.save()
 
         s.setState("STOPPED")
         s.log.info("boiler stopped")
