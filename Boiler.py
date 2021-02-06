@@ -47,8 +47,6 @@ class Boiler():
         s.io.setHwEnableCb(s.hwEnableCb)
         s.lowReturnWater = False
 
-        s._funHeaterEnable = False
-        s._ioFunHeaterStopTriggering = False
         s._ignitTask = None
 
         s.tcBurning = TimeCounter('burning_time')
@@ -78,30 +76,15 @@ class Boiler():
             s.start()
 
 
-    def funHeaterEnable(s):
-        s._funHeaterEnable = True
-        if s.state() == "HEATING":
-            s.io.funHeaterEnable()
-
-
-    def funHeaterDisable(s):
-        s._funHeaterEnable = False
-        s.io.funHeaterDisable()
-
-
-    def isFunHeaterEnabled(s):
-        return s._funHeaterEnable
-
-
     def buttonFunHeaterCb(s, state, prevState):
         if not (state == 0 and prevState == 1):
             return
 
         s.log.info('button Fun Heater is pressed')
-        if s.isFunHeaterEnabled():
-            s.funHeaterDisable()
+        if s.io.isFunHeaterEnabled():
+            s.io.funHeaterDisable()
         else:
-            s.funHeaterEnable()
+            s.io.funHeaterEnable()
 
 
     def hwEnableCb(s, state, prevState):
@@ -255,7 +238,7 @@ class Boiler():
         if s.state() == "STOPPED":
             return
 
-        if s.room_t < -10 or s.room_t > 30:
+        if s.room_t < -10 or s.room_t > 40:
             s.log.error("termosensor room_t is not correct, %.1f degree." % s.room_t)
             s.telegram.send("Ошибка термодатчика room_t, "
                             "он показывает температуру: %.1f градусов. "
@@ -404,6 +387,9 @@ class Boiler():
             s.store.tree['enabled'] = 0
             s.store.save()
 
+        if s.io.isFunHeaterEnabled():
+            s.io.funHeaterDisable()
+
         s.setState("STOPPED")
         s.log.info("boiler stopped")
 
@@ -518,16 +504,10 @@ class Boiler():
 
     def doWaiting(s):
         if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoomMin_t():
-            s._ioFunHeaterStopTriggering = False
             s.startHeating()
             return
 
         s._checkFlameSensor()
-
-        if s.room_t >= s.targetRoomMax_t():
-            if s._funHeaterEnable and not s._ioFunHeaterStopTriggering:
-                s.io.funHeaterEnable(30000)
-                s._ioFunHeaterStopTriggering = True
 
 
     def doHeating(s):
@@ -552,9 +532,16 @@ class Boiler():
                 s.stop()
                 return
 
+            if s.room_t >= s.targetRoomMax_t():
+                if s.io.isFunHeaterEnabled():
+                    s.io.funHeaterEnable(10000)
+
             s.stopHeating()
             s.setState("WAITING")
             return
+
+        if s.returnWater_t >= 45 and not s.io.isFunHeaterEnabled():
+            s.io.funHeaterEnable()
 
         if not s.io.isFlameBurning():
             s.setState("WAITING")
@@ -606,7 +593,7 @@ class Boiler():
             data['target_room_t'] = s.targetRoom_t()
             data['current_room_t'] = s.room_t
             data['current_burning_time'] = s.tcBurning.time()
-            data['fun_heater_is_enabled'] = s.isFunHeaterEnabled()
+            data['fun_heater_is_enabled'] = s.io.isFunHeaterEnabled()
 
         return json.dumps(data)
 
@@ -702,7 +689,7 @@ class Boiler():
             str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
-            str += "fun heater: %s\n" % s.isFunHeaterEnabled()
+            str += "fun heater: %s\n" % s.io.isFunHeaterEnabled()
             str += "overage room t: %.1f\n" % s.room_tOverage()
             str += "overage return water t: %.1f\n" % s.returnWater_tOverage()
 
