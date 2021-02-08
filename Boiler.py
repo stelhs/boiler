@@ -457,6 +457,7 @@ class Boiler():
             s.task.sendMessage("stop")
             return
 
+        s.telegram.send('Нагрев запущен')
         s.setState("HEATING")
         with s.store.lock:
             s.store.tree['ignition_counter'] += 1
@@ -535,6 +536,14 @@ class Boiler():
             if s.room_t >= s.targetRoomMax_t():
                 if s.io.isFunHeaterEnabled():
                     s.io.funHeaterEnable(10000)
+
+            if s.boiler_t >= s.targetBoilerMax_t():
+                msg = 'Нагрев прерван из за превышения температуры котла'
+            else:
+                msg = 'Нагрев завершен'
+            s.telegram.send("%s, время нагрева: %s\n"
+                            "Температура в мастерской: %.1f градусов" %
+                                (msg, timeStr(s.tcBurning.time()), s.room_t))
 
             s.stopHeating()
             s.setState("WAITING")
