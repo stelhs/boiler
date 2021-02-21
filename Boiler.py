@@ -535,7 +535,7 @@ class Boiler():
 
             if s.room_t >= s.targetRoomMax_t():
                 if s.io.isFunHeaterEnabled():
-                    s.io.funHeaterEnable(10000)
+                    s.io.funHeaterEnable(20000)
 
             if s.boiler_t >= s.targetBoilerMax_t():
                 msg = 'Нагрев прерван из за превышения температуры котла'
@@ -549,7 +549,7 @@ class Boiler():
             s.setState("WAITING")
             return
 
-        if s.returnWater_t >= 45 and not s.io.isFunHeaterEnabled():
+        if s.returnWater_t >= 55 and not s.io.isFunHeaterEnabled():
             s.io.funHeaterEnable()
 
         if not s.io.isFlameBurning():
