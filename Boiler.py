@@ -500,6 +500,7 @@ class Boiler():
         s.tcBurning.stop()
         s.saveHeatingTime()
         s.io.airFunEnable(30000)
+        Task.sleep(1000)
         s.log.info("stop heating")
 
 
@@ -549,7 +550,8 @@ class Boiler():
             s.setState("WAITING")
             return
 
-        if s.returnWater_t >= 55 and not s.io.isFunHeaterEnabled():
+        if (s.returnWater_t >= 50 and s.boiler_t >= 80
+                and not s.io.isFunHeaterEnabled()):
             s.io.funHeaterEnable()
 
         if not s.io.isFlameBurning():
