@@ -20,9 +20,10 @@ class Task():
     lastId = 0
     tasksLock = threading.Lock()
 
-    def __init__(s, name):
+    def __init__(s, name, exitCb = None):
         s._name = name
         s._msgQueue = []
+        s.exitCb = exitCb
 
         if Task.taskByName(name):
             raise Exception("Task with name '%s' is existed" % name)
@@ -103,6 +104,8 @@ class Task():
             s.log.error("Exception: %s" % trace)
             print("Task '%s' Exception:\n%s" % (s._name, trace))
             s.telegram.send("stopped by exception: %s" % trace)
+            if s.exitCb:
+                s.exitCb()
 
         s.setState("stopped")
 
@@ -184,13 +187,15 @@ class Task():
                     if t.state() == "running":
                         t.checkForAlive()
 
-            Task.sleep(4000)
+            Task.sleep(10000)
             with Task.tasksLock:
                 for t in Task.listTasks:
                     if t.state() != "running":
                         continue
                     if not t.isAlived():
                         t.setFreezed()
+                        if t.exitCb:
+                            t.exitCb()
                         ot.log.info("task %d:%s is freezed" % (t.id(), t.name()))
                         ot.telegram.send("task %d:%s is freezed. Task stopped." % (t.id(), t.name()))
 

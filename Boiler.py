@@ -30,7 +30,7 @@ class Boiler():
         s.io = HwIo()
         s.store = Store()
         s.log = Syslog("boiler")
-        s.task = Task('boiler')
+        s.task = Task('boiler', s.stopHw)
         s.task.setCb(s.doTask)
         s.telegram = Telegram('boiler')
         s.httpServer = HttpServer('0.0.0.0', 8890)
@@ -74,6 +74,13 @@ class Boiler():
         if enabled:
             s.enableMainPower()
             s.start()
+
+
+    def stopHw(s):
+        s.io.fuelPumpDisable()
+        s.io.airFunDisable()
+        s.io.ignitionRelayDisable()
+        s.io.funHeaterDisable()
 
 
     def buttonFunHeaterCb(s, state, prevState):
@@ -190,7 +197,7 @@ class Boiler():
 
 
     def evFlameSensorCheck(s, state):
-        if state:
+        if state and s.state() == "WAITING":
             s.telegram.send("Ошибка датчика пламени. Он сигнализирует, что пламя есть "
                             "в то время как его быть недолжно. Котёл остановлен.")
             s.stop()
@@ -484,7 +491,7 @@ class Boiler():
     def startIgnitFlameTask(s):
         s.setState("IGNITING")
         with s.lock:
-            s._ignitTask = Task("ignit_flame")
+            s._ignitTask = Task("ignit_flame", s.stopHw)
             s._ignitTask.setCb(s.ignitFlameTask)
             s._ignitTask.start()
 
@@ -500,7 +507,7 @@ class Boiler():
         s.tcBurning.stop()
         s.saveHeatingTime()
         s.io.airFunEnable(30000)
-        Task.sleep(1000)
+        Task.sleep(3000)
         s.log.info("stop heating")
 
 
@@ -716,9 +723,9 @@ class Boiler():
 
 
 class Observ():
-    def __init__(s, condCb, enentCb, ignoreFirst=True):
+    def __init__(s, condCb, eventCb, ignoreFirst=True):
         s.condCb = condCb
-        s.enentCb = enentCb
+        s.eventCb = eventCb
         s.state = None
         s.first = True
         s.ignoreFirst = ignoreFirst
@@ -734,5 +741,5 @@ class Observ():
         if val == s.state:
             return
         s.state = val
-        s.enentCb(val)
+        s.eventCb(val)
 
