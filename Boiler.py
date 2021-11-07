@@ -54,7 +54,6 @@ class Boiler():
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
         s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 1, s.evDiffWater_t, ignoreFirst=False)
-        s._checkFlameSensor = Observ(lambda: s.io.isFlameBurning(), s.evFlameSensorCheck)
         s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
 
@@ -194,13 +193,6 @@ class Boiler():
             s.io.waterPumpEnable()
         else:
             s.io.waterPumpEnable(60000 * 10)
-
-
-    def evFlameSensorCheck(s, state):
-        if state and s.state() == "WAITING":
-            s.telegram.send("Ошибка датчика пламени. Он сигнализирует, что пламя есть "
-                            "в то время как его быть недолжно. Котёл остановлен.")
-            s.stop()
 
 
     def evHourTick(s, hour):
@@ -515,8 +507,6 @@ class Boiler():
         if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoomMin_t():
             s.startHeating()
             return
-
-        s._checkFlameSensor()
 
 
     def doHeating(s):
