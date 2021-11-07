@@ -593,16 +593,12 @@ class Boiler():
         data['ignition_counter'] = s.ignitionCounter()
         data['overage_room_t'] = s.room_tOverage()
         data['overage_return_water_t'] = s.returnWater_tOverage()
-
-
-        if s.state() != "STOPPED":
-            data['current_boiler_t'] = s.boiler_t
-            data['current_return_water_t'] = s.returnWater_t
-            data['target_room_t'] = s.targetRoom_t()
-            data['current_room_t'] = s.room_t
-            data['current_burning_time'] = s.tcBurning.time()
-            data['fun_heater_is_enabled'] = s.io.isFunHeaterEnabled()
-
+        data['current_boiler_t'] = s.boiler_t
+        data['current_return_water_t'] = s.returnWater_t
+        data['target_room_t'] = s.targetRoom_t()
+        data['current_room_t'] = s.room_t
+        data['current_burning_time'] = s.tcBurning.time()
+        data['fun_heater_is_enabled'] = s.io.isFunHeaterEnabled()
         return json.dumps(data)
 
 
