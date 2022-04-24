@@ -53,7 +53,7 @@ class Boiler():
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
-        s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 1, s.evDiffWater_t, ignoreFirst=False)
+        s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 2, s.evDiffWater_t, ignoreFirst=False)
         s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
 
@@ -192,7 +192,7 @@ class Boiler():
         if result:
             s.io.waterPumpEnable()
         else:
-            s.io.waterPumpEnable(60000 * 10)
+            s.io.waterPumpEnable(60000 * 5)
 
 
     def evHourTick(s, hour):
@@ -274,7 +274,7 @@ class Boiler():
 
     def targetRoomMin_t(s):
         with s.store.lock:
-            return float(s.store.tree['target_room_t']) - 1
+            return float(s.store.tree['target_room_t']) - 0.5
 
 
     def setTargetRoom_t(s, t):
