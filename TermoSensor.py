@@ -1,80 +1,67 @@
+import re, os
 from Task import *
 from common import *
 from Syslog import *
+from AvQueue import *
 
 
 class TermoSensor():
-    sensorMode = 'real'
-
-    class TermoError(Exception):
-        def __init__(s, *args):
-            Exception.__init__(s, args)
-
-
-    def __init__(s, devName, name):
+    def __init__(s, addr, name=''):
         s._name = name
-        s._devName = devName
-        s._val = None
-        s.log = Syslog("termo_sensor_%s" % name)
-        s.error = False
+        s.addr = addr
+        s.log = Syslog("termo_sensor_%s_%s" % (addr, name))
+        s.lock = threading.Lock()
+        s._fake = None
+        s._t = None
+        s.queue = AvQueue(5)
 
-        if s.sensorMode == 'fake':
-            s._fileName = 'FAKE/termo_sensor_%s' % name
-            if not os.path.exists(s._fileName):
-                filePutContent(s._fileName, "18.0")
+        s.task = Task("termo_sensor_%s" % addr)
+        s.task.setCb(s.do)
+        s.task.start()
+
+        if os.path.exists('FAKE'):
+            s._fake = True
+
+        if s._fake:
+            s._fakeFileName = 'FAKE/%s' % addr
+            if not os.path.exists(s._fakeFileName):
+                filePutContent(s._fakeFileName, "18.0")
             return
 
-        s._of = open("/sys/bus/w1/devices/%s/temperature" % devName, "r")
 
-        s._lock = threading.Lock()
-
-        def task():
-            while(1):
-                val = s.read()
-                with s._lock:
-                    s._val = val
-                Task.sleep(500)
-
-        s._task = Task("termo_sensor_%s" % name)
-        s._task.setCb(task)
-        s._task.start()
+    def t(s):
+        if s._fake:
+            return float(fileGetContent(s._fakeFileName))
+        with s.lock:
+            return s._t
 
 
-    def read(s):
-        while (1):
+    def do(s):
+        while True:
+            Task.sleep(1000)
             try:
-                s._of.seek(0)
-                val = s._of.read().strip()
-            except:
-                s.error = True
-                s.log.error("Can't read termo sensor")
-                return
-
-            if not val:
-                Task.sleep(100)
-                continue
-
-            return float(int(val) / 1000)
-
-
-    def val(s):
-        if s.error:
-            raise TermoSensor.TermoError("Can't read termo sensor %s" % s._name, s._name)
-
-        if s.sensorMode == 'real':
-            with s._lock:
-                return s._val
-
-        return float(fileGetContent(s._fileName))
-
-
-    def devName(s):
-        return s._devName
+                of = open("/sys/bus/w1/devices/%s/w1_slave" % s.addr, "r")
+                for i in range(10):
+                    of.seek(0)
+                    c = of.read().strip()
+                    res = re.search("t=([\d-]+)", c)
+                    if not res:
+                        Task.sleep(100)
+                        continue
+                    t = float(res.groups()[0]) / 1000.0
+                    with s.lock:
+                        s.queue.push(t)
+                        s._t = s.queue.round()
+                of.close()
+            except Exception as e:
+                err = "Can't read termosensor, reason: %s" % e
+                s.log.err(err)
+                with s.lock:
+                    s._t = None
 
 
     def __str__(s):
-        return "%s, TermoSensor %s/%s, temperature: %.1f" % (
-                    super().__str__(), s._name, s._devName, s.val())
+        return "%s: %.1f" % (s.addr, s.t())
 
 
 

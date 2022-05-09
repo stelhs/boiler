@@ -2,9 +2,16 @@ from math import *
 import rlcompleter, readline
 readline.parse_and_bind('tab:complete')
 from Boiler import *
+import atexit
 
 
 boiler = Boiler()
+
+def exitCb():
+    print("call exitCb")
+    boiler.destroy()
+
+atexit.register(exitCb)
 
 
 def s():

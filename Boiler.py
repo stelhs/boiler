@@ -6,6 +6,8 @@ from Telegram import *
 from HttpServer import *
 from TimeCounter import *
 from Integrator import *
+from Settings import *
+from UiNotifier import *
 import threading
 import json
 import os, re
@@ -20,32 +22,32 @@ class Boiler():
     #   HEATING
     _state = "STOPPED"
 
-    fake = False
-
     def __init__(s):
         if os.path.isdir("FAKE"):
             s.fake = True
 
         s.lock = threading.Lock()
         s.io = HwIo()
-        s.store = Store()
+        s.conf = Settings()
+        s.store = Store() # TODO
         s.log = Syslog("boiler")
         s.task = Task('boiler', s.stopHw)
         s.task.setCb(s.doTask)
-        s.telegram = Telegram('boiler')
-        s.httpServer = HttpServer('0.0.0.0', 8890)
-        s.httpServer.setReqCb("GET", "/boiler", s.httpReqStat)
-        s.httpServer.setReqCb("GET", "/stat", s.httpReqSbioStat)
+        s.telegram = Telegram('boiler') # TODO
+        s.ui = UiNotifier(s.conf)
+        s.httpServer = HttpServer(s.conf.httpListenHost, s.conf.httpListenPort)
+        s.httpServer.setReqCb("GET", "/mbio/stat", s.httpReqMbioStat)
+        s.httpServer.setReqCb("GET", "/boiler/stat", s.httpReqStat)
         s.httpServer.setReqCb("GET", "/boiler/reset_stat", s.httpReqResetStat)
-        s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup)
+        s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup) #TODO
         s.httpServer.setReqCb("GET", "/boiler/start", s.httpReqStart)
         s.httpServer.setReqCb("GET", "/boiler/stop", s.httpReqStop)
         s.httpServer.setReqCb("GET", "/boiler/enable_power", s.httpReqEnablePower)
         s.httpServer.setReqCb("GET", "/boiler/enable_fun_heater", s.httpReqEnableFunHeater)
         s.httpServer.setReqCb("GET", "/boiler/disable_fun_heater", s.httpReqDisableFunHeater)
-        s.io.setFunHeaterButtonCb(s.buttonFunHeaterCb)
         s.io.setHwEnableCb(s.hwEnableCb)
-        s.lowReturnWater = False
+        s.io.setHwEventsCb(s.updateUi)
+        s.io.setFlameBurningCb(s.updateUi)
 
         s._ignitTask = None
 
@@ -60,19 +62,18 @@ class Boiler():
         s._room_tIntegrator = Integrator()
         s._retWater_tIntegrator = Integrator()
 
-        s.io.ignitionRelayDisable()
-        s.io.funHeaterDisable()
-        s.io.fuelPumpDisable()
-
         s.task.start()
-        s.telegram.send('Котёл перезапущен')
-        Task.runObserveTasks()
+#        Task.runObserveTasks()
 
-        with s.store.lock:
-            enabled = s.store.tree['enabled']
-        if enabled:
+        if s.store.valInt('enabled'):
             s.enableMainPower()
             s.start()
+
+        s.updateUi()
+        s.log.info("Initialization finished")
+        msg = 'Котёл перезапущен'
+        s.telegram.send(msg)
+        s.ui.notify('info', msg)
 
 
     def stopHw(s):
@@ -82,20 +83,16 @@ class Boiler():
         s.io.funHeaterDisable()
 
 
-    def buttonFunHeaterCb(s, state, prevState):
-        if not (state == 0 and prevState == 1):
-            return
-
-        s.log.info('button Fun Heater is pressed')
-        if s.io.isFunHeaterEnabled():
-            s.io.funHeaterDisable()
-        else:
-            s.io.funHeaterEnable()
-
-
     def hwEnableCb(s, state, prevState):
         if state == 0 and prevState == 1:
             s.log.info('HW power is enabled')
+            if s.io.isOverHearting():
+                msg = 'Boiler is overHeating'
+                s.log(msg)
+                s.ui.notify('error', msg)
+                s.stop()
+                return
+
             s.start()
             return
 
@@ -105,7 +102,9 @@ class Boiler():
                 return
 
             s.stop()
-            s.telegram.send('Отсуствует питание горелки. Котёл остановлен')
+            msg = 'Отсуствует питание горелки. Котёл остановлен'
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
 
 
     def doTask(s):
@@ -117,24 +116,10 @@ class Boiler():
                     s.stop()
                     s.telegram.send("Котёл остановлен")
 
-
-            try:
-                s.room_t = s.io.room_t()
-                s.boiler_t = s.io.boiler_t()
-                s.returnWater_t = s.io.retWater_t()
-            except TermoSensor.TermoError as e:
-                s.stop()
-                s.telegram.send("Ошибка при получении температур: %s, Котёл остановлен" % e.args[1])
-
-            if not s.room_t or not s.boiler_t or not s.returnWater_t:
-                if errCnt > 5:
-                    s.stop()
-                    s.telegram.send("Датчики температур не работают: %s, Котёл остановлен" % e.args[1])
-                    errCnt = 0
-
-                errCnt += 1
-                Task.sleep(1000)
-                continue
+            s.room_t = s.io.room_t()
+            s.boiler_t = s.io.boiler_t()
+            s.returnWater_t = s.io.retWater_t()
+            s.updateUi()
 
             s._checkOverHeating()
             s._checkWaterIsCold()
@@ -156,34 +141,41 @@ class Boiler():
         if not isOverHearting:
             return
 
-        s.log.error("Over Heating!")
+        s.log.err("Over Heating!")
         msg = "Пропало питание, возможно перегрев котла!"
         if s.state() != "STOPPED":
             s.stop()
             s.io.funHeaterEnable(5 * 60 * 1000)
             msg += " Котёл остановлен."
 
+        s.ui.notify('error', msg)
         s.telegram.send(msg)
 
 
     def evWaterIsCold(s, returnWater_t):
         if returnWater_t <= 3:
-            s.telegram.send("Температура теплоносителя упала "
-                            "до %.1f градусов!" % returnWater_t)
-            s.log.error("returnWater_t failing down to %.1f degree" % returnWater_t)
+            msg = "Температура теплоносителя упала " \
+                  "до %.1f градусов!" % returnWater_t
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
+            s.log.err("returnWater_t failing down to %.1f degree" % returnWater_t)
 
 
     def evWaterPressure(s, isWaterPressureNormal):
+        s.updateUi()
         if isWaterPressureNormal:
-            s.telegram.send("Давление в системе отопления восстановлено")
+            msg = "Давление в системе отопления восстановлено"
+            s.ui.notify('info', msg)
+            s.telegram.send(msg)
             s.log.info("Water pressure go to normal")
             return
 
-        s.log.error("Falling water pressure")
+        s.log.err("Falling water pressure")
         msg = "Упало давление в системе отопления!"
         if s.state() != "STOPPED":
             s.stop()
             msg += " Котёл остановлен."
+        s.ui.notify('error', msg)
         s.telegram.send(msg)
         return
 
@@ -238,82 +230,78 @@ class Boiler():
             return
 
         if s.room_t < -10 or s.room_t > 40:
-            s.log.error("termosensor room_t is not correct, %.1f degree." % s.room_t)
-            s.telegram.send("Ошибка термодатчика room_t, "
-                            "он показывает температуру: %.1f градусов. "
-                            "Котёл остановлен." % s.room_t)
+            s.log.err("termosensor room_t is not correct, %.1f degree." % s.room_t)
+            msg = "Ошибка термодатчика room_t, " \
+                  "он показывает температуру: %.1f градусов. " \
+                  "Котёл остановлен." % s.room_t
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
             s.stop()
             return
 
         if s.boiler_t < -1 or s.boiler_t > 120:
-            s.log.error("termosensor boiler_t is not correct, %.1f degree." % s.room_t)
-            s.telegram.send("Ошибка термодатчика boiler_t, "
-                            "он показывает температуру: %.1f градусов. "
-                            "Котёл остановлен." % s.boiler_t)
+            s.log.err("termosensor boiler_t is not correct, %.1f degree." % s.room_t)
+            msg = "Ошибка термодатчика boiler_t, " \
+                  "он показывает температуру: %.1f градусов. " \
+                  "Котёл остановлен." % s.boiler_t
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
             s.stop()
             return
 
         if s.returnWater_t < -1 or s.returnWater_t > 120:
-            s.log.error("termosensor returnWater_t is not correct, %.1f degree." % s.room_t)
-            s.telegram.send("Ошибка термодатчика returnWater_t, "
-                            "он показывает температуру: %.1f градусов. "
-                            "Котёл остановлен." % s.boiler_t)
+            s.log.err("termosensor returnWater_t is not correct, %.1f degree." % s.room_t)
+            msg = "Ошибка термодатчика returnWater_t, " \
+                  "он показывает температуру: %.1f градусов. " \
+                  "Котёл остановлен." % s.boiler_t
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
             s.stop()
             return
 
 
     def targetRoom_t(s):
-        with s.store.lock:
-            return float(s.store.tree['target_room_t'])
+        return s.store.valFloat('target_room_t')
 
 
     def targetRoomMax_t(s):
-        with s.store.lock:
-            return float(s.store.tree['target_room_t'])
+        return s.store.valFloat('target_room_t')
 
 
     def targetRoomMin_t(s):
-        with s.store.lock:
-            return float(s.store.tree['target_room_t']) - 0.5
+        return s.store.valFloat('target_room_t') - 0.5
 
 
     def setTargetRoom_t(s, t):
-        with s.store.lock:
-            s.store.tree['target_room_t'] = str(t)
-            s.store.save()
+        s.store.setVal('target_room_t', t)
+        s.updateUi()
 
 
     def targetBoilerMin_t(s):
-        with s.store.lock:
-            return float(s.store.tree['target_boiler_min_t'])
+        return s.store.valFloat('target_boiler_min_t')
 
 
     def setTargetBoilerMin_t(s, t):
-        with s.store.lock:
-            s.store.tree['target_boiler_min_t'] = str(t)
-            s.store.save()
+        s.store.setVal('target_boiler_min_t', t)
 
 
     def targetBoilerMax_t(s):
-        with s.store.lock:
-            return float(s.store.tree['target_boiler_max_t'])
+        return s.store.valFloat('target_boiler_max_t')
 
 
     def setTargetBoilerMax_t(s, t):
-        with s.store.lock:
-            s.store.tree['target_boiler_max_t'] = str(t)
-            s.store.save()
+        s.store.setVal('target_boiler_max_t', t)
 
 
     def enableMainPower(s):
         s.io.mainPowerRelayEnable()
         Task.sleep(500)
         s.io.mainPowerRelayDisable()
+        s.updateUi()
 
 
     def burningTimeTotal(s):
-        with s.store.lock:
-            return s.store.tree['burning_time']
+        return s.store.valInt('burning_time')
 
 
     def fuelConsumption(s):
@@ -327,38 +315,38 @@ class Boiler():
 
 
     def ignitionCounter(s):
-        with s.store.lock:
-            return s.store.tree['ignition_counter']
+        return s.store.valInt('ignition_counter')
 
 
     def saveHeatingTime(s):
         burningTime = s.tcBurning.time()
         s.tcBurning.reset()
         if burningTime:
-            with s.store.lock:
-                s.store.tree['burning_time'] += burningTime
-                s.store.save()
+            s.store.increaseVal('burning_time', burningTime)
+        s.updateUi()
 
 
     def start(s):
         if s.state() != "STOPPED":
-            s.log.error("Can't start boiler, boiler already was started")
+            s.log.err("Can't start boiler, boiler already was started")
             return False
 
         if not s.io.isHwEnabled():
-            s.log.error("Can't start boiler, HW power is not present")
+            s.log.err("Can't start boiler, HW power is not present")
             return False
 
         if not s.io.isPressureNormal():
-            s.log.error("Can't start boiler, No water pressure")
+            s.log.err("Can't start boiler, No water pressure")
             return False
 
-        with s.store.lock:
-            s.store.tree['enabled'] = 1
-            s.store.save()
+        if s.io.isOverHearting():
+            s.log.err("Can't start boiler, Boiler is overheating")
+            return False
 
+        s.store.setVal('enabled', 1)
         s.setState("WAITING")
         s.log.info("boiler started")
+        s.ui.notify('info', "Котёл включен")
         s.telegram.send("Котёл включен")
         return True
 
@@ -373,7 +361,7 @@ class Boiler():
         if s.io.isFuelPumpEnabled():
             s.io.fuelPumpDisable()
 
-        s.io.ignitionRelayDisable()
+        s.io.ignitionRel/ayDisable()
         s.io.funHeaterDisable()
         s.tcBurning.stop()
         s.saveHeatingTime()
@@ -382,22 +370,29 @@ class Boiler():
         else:
             s.io.airFunDisable()
 
-        with s.store.lock:
-            s.store.tree['enabled'] = 0
-            s.store.save()
+        s.store.setVal('enabled', 0)
 
         if s.io.isFunHeaterEnabled():
             s.io.funHeaterDisable()
 
         s.setState("STOPPED")
         s.log.info("boiler stopped")
+        s.ui.notify('info', "Котёл остановлен")
 
 
     def ignitFlame(s):
         s.log.info("start ignit flame procedure")
+
+        s.setState("IGNITING")
         if s.fake:
+            s.io.airFunEnable()
+            s.io.fuelPumpEnable()
             Task.sleep(2000)
             s.log.info("the flame was stabilizated")
+            s.ui.notify('info', 'Нагрев запущен')
+            s.telegram.send('Нагрев запущен')
+            s.store.incrementVal('ignition_counter')
+            s.setState("HEATING")
             return True
 
         for attemptCnt in range(10):
@@ -419,12 +414,15 @@ class Boiler():
 
             if not success:
                 s.io.fuelPumpDisable()
-                s.log.error("can't first burn, attemptCnt: %d" % attemptCnt)
+                msg = "can't first burn, attemptCnt: %d" % attemptCnt
+                s.log.err(msg)
+                s.ui.notify('error', msg)
                 Task.sleep(15000)
                 continue
 
             s.tcBurning.start()
             s.log.info("Waiting flame stabilization")
+            s.ui.notify('info', "Ожидание стабилизации пламени")
             success = False
             for attempt in range(30):
                 if s.io.isFlameBurning():
@@ -432,75 +430,50 @@ class Boiler():
                     continue
 
                 s.io.fuelPumpDisable()
-                s.log.error("Can't stabilization: the flame went out, attemptCnt: %d" % attemptCnt)
+                msg = "Can't stabilization: the flame went out, attemptCnt: %d" % attemptCnt
+                s.log.err(msg)
+                s.ui.notify('error', msg)
                 Task.sleep(15000)
                 break
             else:
                 s.log.info("The flame was stabilizated")
+                s.ui.notify('info', 'Нагрев запущен')
+                s.telegram.send('Нагрев запущен')
+                s.setState("HEATING")
+                s.store.incrementVal('ignition_counter')
                 return True
 
         else:
             s.io.fuelPumpDisable()
             Task.sleep(15000)
             s.io.airFunDisable()
-            s.log.error("Can't start heating. All attempts were exhausted.")
-            s.telegram.send("Не удалось зажечь пламя, все попытки исчерпаны.")
+            s.log.err("Can't start heating. All attempts were exhausted.")
+            msg = "Не удалось зажечь пламя, все попытки исчерпаны."
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
             s.tcBurning.reset()
+            s.task.sendMessage("stop")
             return False
 
 
-    def ignitFlameTask(s):
-        rc = s.ignitFlame()
-        if not rc:
-            s.log.error("Can't iginit flame")
-            s.task.sendMessage("stop")
-            return
-
-        s.telegram.send('Нагрев запущен')
-        s.setState("HEATING")
-        with s.store.lock:
-            s.store.tree['ignition_counter'] += 1
-            s.store.save()
-        with s.lock:
-            s._ignitTask.remove()
-            s._ignitTask = None
-
-
-    def stopIgnitFlameTask(s):
-        with s.lock:
-            if not s._ignitTask:
-                return
-            s._ignitTask.stop()
-            s._ignitTask.remove()
-            Task.sleep(2000)
-            s._ignitTask = None
-
-        s.io.fuelPumpDisable()
-        s.io.ignitionRelayDisable()
-        s.log.debug('stop ignit_flame task')
-
-
-    def startIgnitFlameTask(s):
-        s.setState("IGNITING")
-        with s.lock:
-            s._ignitTask = Task("ignit_flame", s.stopHw)
-            s._ignitTask.setCb(s.ignitFlameTask)
-            s._ignitTask.start()
-
-
     def startHeating(s):
-        s.stopIgnitFlameTask()
-        s.startIgnitFlameTask()
+        def abort():
+            s._ignitTask = None
+        s._ignitTask = Task.asyncRunSingle('ignition_flame',
+                                           s.ignitFlame, abort)
 
 
     def stopHeating(s):
-        s.stopIgnitFlameTask()
+        if s._ignitTask:
+            s._ignitTask.remove()
         s.io.fuelPumpDisable()
+        s.io.ignitionRelayDisable()
         s.tcBurning.stop()
         s.saveHeatingTime()
         s.io.airFunEnable(30000)
         Task.sleep(3000)
         s.log.info("stop heating")
+        s.ui.notify('info', "stop heating")
 
 
     def doWaiting(s):
@@ -512,22 +485,26 @@ class Boiler():
     def doHeating(s):
         if s.tcBurning.time() > 10 * 60 and s.boiler_t < 30:
             s.stop()
-            s.log.error("Boiler stopped by timeout. boiler t: %.1f, "
+            s.log.err("Boiler stopped by timeout. boiler t: %.1f, "
                         "heating time: %d" % (s.boiler_t, s.tcBurning.time()))
-            s.telegram.send("Котёл работает более %d секунд а температура в котле "
-                            "так и не превысила 30 градусов. "
-                            "Котёл остановлен." % s.tcBurning.time())
+            msg = "Котёл работает более %d секунд а температура в котле " \
+                  "так и не превысила 30 градусов. " \
+                  "Котёл остановлен." % s.tcBurning.time()
+            s.ui.notify('error', msg)
+            s.telegram.send(msg)
             return
 
 
         if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoomMax_t():
             if s.room_t < s.targetRoomMin_t() and s.tcBurning.time() < 20:
-                s.log.error("The boiler has reached the temperature %.1f "
+                s.log.err("The boiler has reached the temperature %.1f "
                             "is very too quickly" % s.targetBoilerMax_t())
-                s.telegram.send("Котёл набрал температуру до %.1f градусов "
-                                "слишком быстро (за %d секунд), "
-                                "Котёл остановлен." % (s.targetBoilerMax_t(),
-                                                       s.tcBurning.time()))
+                msg = "Котёл набрал температуру до %.1f градусов " \
+                      "слишком быстро (за %d секунд), " \
+                      "Котёл остановлен." % (s.targetBoilerMax_t(),
+                                             s.tcBurning.time())
+                s.ui.notify('error', msg)
+                s.telegram.send(msg)
                 s.stop()
                 return
 
@@ -552,9 +529,10 @@ class Boiler():
             s.io.funHeaterEnable()
 
         if not s.io.isFlameBurning():
+            s.ui.notify('error', "Пламя в котле самопроизвольно погасло!")
             s.setState("WAITING")
             s.stopHeating()
-            s.log.error("the flame went out!")
+            s.log.err("the flame went out!")
             s.telegram.send("Пламя в котле самопроизвольно погасло!")
             Task.sleep(3000)
             return False
@@ -564,11 +542,42 @@ class Boiler():
         with s.lock:
             s._state = state
         s.log.info("set state %s" % state)
+        s.updateUi()
 
 
     def state(s):
         with s.lock:
             return s._state
+
+
+    def destroy(s):
+        s.ui.notify('info', "boiler.py process was killed")
+        s.stopHw()
+        s.httpServer.destroy()
+
+
+    def updateUi(s):
+        stat = {'state': str(s._state),
+                'power': str(s.io.isHwEnabled()),
+                'air_fun': str(s.io.isAirFunEnabled()),
+                'fuel_pump': str(s.io.isFuelPumpEnabled()),
+                'ignition': str(s.io.isIgnitionRelayEnabled()),
+                'water_pump': str(s.io.isWaterPumpEnabled()),
+                'flame': str(s.io.isFlameBurning()),
+                'heater': str(s.io.isFunHeaterEnabled()),
+                'no_pressure': str(not s.io.isPressureNormal()),
+                'overheat': str(s.io.isOverHearting()),
+
+                'target_t': str(s.targetRoom_t()),
+                'room_t': str(s.room_t),
+                'boiler_box_t': str(s.io.boilerInside_t()),
+                'boiler_t': str(s.boiler_t),
+                'return_t': str(s.returnWater_t),
+                'ignition_counter': str(s.ignitionCounter()),
+                'fuel_consumption': str(s.fuelConsumption()),
+                };
+        s.ui.notify('status', stat)
+
 
 
     def resetStatistics(s):
@@ -602,7 +611,7 @@ class Boiler():
         return json.dumps(data)
 
 
-    def httpReqSbioStat(s, args, body):
+    def httpReqMbioStat(s, args, body):
         f = os.popen('uptime')
         c = f.read()
         f.close()
@@ -649,7 +658,7 @@ class Boiler():
     def httpReqStart(s, args, body):
         rc = s.start()
         if not rc:
-            return json.dumps({"status": "error"})
+            return json.dumps({"status": "error"}) #TODO
         s.telegram.send('Котёл запущен по REST запросу')
         return json.dumps({"status": "ok"})
 
@@ -702,7 +711,6 @@ class Boiler():
 
     def print(s):
         print(s.__str__())
-
 
 
 

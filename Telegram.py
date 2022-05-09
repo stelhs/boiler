@@ -10,6 +10,7 @@ class Telegram():
 
 
     def send(s, msg):
+        return
         def sendMsg(msg):
             os.system("./telegram.php msg_send %d '%s: %s'" % (
                             s._chatId, s._name, msg))

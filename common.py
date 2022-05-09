@@ -14,6 +14,13 @@ def fileGetContent(filename):
     return data
 
 
+def fileGetBinary(filename):
+    f = open(filename, "rb")
+    data = f.read()
+    f.close()
+    return data
+
+
 def timeStr(time):
     if time < 60:
         return "%d sec" % time

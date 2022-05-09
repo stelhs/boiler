@@ -6,37 +6,48 @@ from Syslog import *
 
 
 class Gpio():
-    gpioMode = 'real'
+    class Ex(Exception):
+        pass
+
     poll = select.poll()
     task = Task('gpio_events')
 
     _usedGpio = []
-    def __init__(s, name, num, mode):
+    def __init__(s, num, name = "", mode = None):
         if Gpio.gpioByNum(num):
-            raise Exception("GPIO %d already in used" % num)
+            raise Gpio.Ex("GPIO %d already in used" % num)
 
         s._num = num
-        s._mode = mode
         s._name = name
-        s._num = num
+        s._mode = 'not_configured'
+
         s._fake = False
-        s._timeoutTask = None
-        s._lock = threading.Lock()
-        s.eventCb = None
-        s.prevVal = None
-
-        s.log = Syslog("gpio%d_%s" % (s._num, s._name))
-
-        s._usedGpio.append(s)
-        if Gpio.gpioMode == 'real':
-            s.initReal()
-        elif Gpio.gpioMode == 'fake':
-            s.initFake()
+        if os.path.exists('FAKE'):
             s._fake = True
 
+        s._timeoutTask = None
+        s._lock = threading.Lock()
+        s._gpioLock = threading.Lock()
+        s.eventCb = None
+        s.prevVal = None
+        s.log = Syslog("gpio%d" % (s._num))
+        s._usedGpio.append(s)
+        s._of = None
 
-    def name(s):
-        return s._name;
+        if mode:
+            s.setMode(mode)
+
+
+    def setMode(s, mode):
+        s._mode = mode
+        if s._fake:
+            s.initFake()
+        else:
+            s.initReal()
+
+
+    def mode(s):
+        return s._mode
 
 
     def num(s):
@@ -50,17 +61,22 @@ class Gpio():
 
 
     def initReal(s):
+        if s._of:
+            close(s._of)
+
         if not os.path.exists("/sys/class/gpio/gpio%d" % s._num):
             filePutContent("/sys/class/gpio/export", "%d" % s._num)
 
-        filePutContent("/sys/class/gpio/gpio%d/direction" % s._num, s._mode)
-        filePutContent("/sys/class/gpio/gpio%d/edge" % s._num, "both")
+        mode = fileGetContent("/sys/class/gpio/gpio%d/direction" % s._num).strip()
+        if mode != s._mode:
+            filePutContent("/sys/class/gpio/gpio%d/direction" % s._num, s._mode)
 
+        filePutContent("/sys/class/gpio/gpio%d/edge" % s._num, "both")
         s._of = open("/sys/class/gpio/gpio%d/value" % s._num, "r+")
 
 
     def initFake(s):
-        s._fileName = "FAKE/GPIO%d_%s_%s" % (s._num, s._mode, s._name)
+        s._fileName = "FAKE/GPIO%d_%s" % (s._num, s._mode)
 
         if not os.path.exists(s._fileName):
             if s._mode == 'in':
@@ -72,9 +88,10 @@ class Gpio():
 
 
     def setValueReal(s, val):
-        s._of.seek(0)
-        s._of.write("%d" % val)
-        s._of.flush()
+        with s._gpioLock:
+            s._of.seek(0)
+            s._of.write("%d" % val)
+            s._of.flush()
 
 
     def setValueFake(s, val):
@@ -82,13 +99,16 @@ class Gpio():
 
 
     def setValue(s, val):
+        if s._mode == 'not_configured':
+            raise Gpio.Ex("Can't setValue() GPIO:%d does not configured" % s._num)
+
+        if s._mode == 'in':
+            raise Gpio.Ex("Can't setValue() GPIO:%d configured as input" % s._num)
+
         with s._lock:
             if s._timeoutTask:
                 s.log.debug('cancel setValueTimeout')
-                s._timeoutTask.stop()
                 s._timeoutTask.remove()
-                #s._timeoutTask.waitForRemoved()
-                Task.sleep(2000) #TODO
                 s._timeoutTask = None
 
         if s._fake:
@@ -97,21 +117,21 @@ class Gpio():
 
 
     def valueFake(s):
-        val = fileGetContent(s._fileName)
-        if val.strip() == '1':
-            return 1
-        return 0
+        c = fileGetContent(s._fileName)
+        return int(c.strip())
 
 
     def valueReal(s):
-        s._of.seek(0)
-        val = s._of.read()
-        if val.strip() == '1':
-            return 1
-        return 0
+        with s._gpioLock:
+            s._of.seek(0)
+            c = s._of.read()
+        return int(c.strip())
 
 
     def value(s):
+        if s._mode == 'not_configured':
+            raise Gpio.Ex("Can't setValue() GPIO:%d does not configured" % s._num)
+
         if s._fake:
             val = s.valueFake()
         else:
@@ -121,6 +141,9 @@ class Gpio():
 
 
     def setValueTimeout(s, val, interval):
+        if s._mode == 'not_configured':
+            raise Gpio.Ex("Can't setValue() GPIO:%d does not configured" % s._num)
+
         with s._lock:
             if s._timeoutTask:
                 s._timeoutTask.stop()
@@ -138,27 +161,35 @@ class Gpio():
                 s._timeoutTask = None
             s.log.info("set to value '%d' by timeout: %d mS" % (val, interval))
 
-        task = Task.setTimeout('gpio_%s_%dmS' % (s._name, interval), interval, timeout)
+        task = Task.setTimeout('gpio_%s_%dmS' % (s._num, interval), interval, timeout)
         with s._lock:
             s._timeoutTask = task
 
 
     def setEventCb(s, cb):
-        if not s._of:
+        if s._fake:
             return
+
+        if not s._of:
+            raise Gpio.Ex("Can't setEventCb(): GPIO:%d file does not opened" % s._num)
+
         s.poll.register(s._of.fileno(), select.POLLPRI)
         s.eventCb = cb
 
 
     def unsetEvent(s):
+        if s._fake:
+            return
+
         if not s._of:
             return
+
         s.poll.usregister(s._of.fileno())
         s.eventCb = None
 
 
     def __str__(s):
-        return "GPIO%d_%s %s, val = %d" % (s._num, s._mode, s._name, s.value())
+        return "GPIO:%d_%s" % (s._num, s._mode)
 
 
     @staticmethod
@@ -177,13 +208,6 @@ class Gpio():
 
         return None
 
-
-    @staticmethod
-    def gpioByName(name):
-        for gpio in Gpio._usedGpio:
-            if gpio.name() == name:
-                return gpio
-        return None
 
 
     @staticmethod
@@ -205,8 +229,9 @@ class Gpio():
                 gpio = c.gpioByFd(fd)
                 prevVal = gpio.prevVal
                 val = gpio.value()
+                gpio.prevVal = val
                 if gpio.eventCb:
-                    gpio.eventCb(val, prevVal)
+                    gpio.eventCb(gpio, val, prevVal)
 
 
     @classmethod

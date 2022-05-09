@@ -23,16 +23,52 @@ class Store():
             with s.lock:
                 s.save()
             return
-        with s.lock:
-            s.load()
+        s.load()
 
 
     def load(s):
-        c = fileGetContent(s.storeFile)
-        s.tree = json.loads(c)
+        with s.lock:
+            c = fileGetContent(s.storeFile)
+            tree = json.loads(c)
+            s.tree.update(tree)
 
 
     def save(s):
         d = json.dumps(s.tree)
         filePutContent(s.storeFile, d)
+
+
+    def val(s, name):
+        with s.lock:
+            return s.tree[name]
+
+
+    def valInt(s, name):
+        with s.lock:
+            return int(s.tree[name])
+
+
+    def valFloat(s, name):
+        with s.lock:
+            return float(s.tree[name])
+
+
+    def setVal(s, name, val):
+        with s.lock:
+            s.tree[name] = str(val);
+            s.save()
+
+
+    def incrementVal(s, name):
+        with s.lock:
+            s.tree[name] = str(int(s.tree[name]) + 1);
+
+
+    def increaseVal(s, name, upVal):
+        with s.lock:
+            s.tree[name] = str(int(s.tree[name]) + upVal);
+
+
+
+
 
