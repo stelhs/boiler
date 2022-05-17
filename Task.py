@@ -33,8 +33,8 @@ class Task():
             raise Exception("Task with name '%s' is existed" % name)
 
         s.log = Syslog("task_%s" % name)
-        s.log.mute('info')
-        s.log.debug("created")
+        #s.log.mute('info')
+        s.log.info("created")
         s._lock = threading.Lock()
         s._ev = threading.Event()
         with s._lock:
@@ -91,6 +91,9 @@ class Task():
 
 
     def start(s):
+        if s.state() != "stopped":
+            return
+
         s.log.info("start")
         t = threading.Thread(target=s.thread, daemon=True, args=(s._name, ))
         t.start()
@@ -105,13 +108,10 @@ class Task():
     def thread(s, name):
         s._tid = threading.get_ident()
         try:
-            if s.cb:
-                if s.cbArgs:
-                    s.cb(s.cbArgs)
-                else:
-                    s.cb()
+            if s.cbArgs:
+                s.cb(s.cbArgs)
             else:
-                s.do()
+                s.cb()
         except TaskStopException:
             s.log.info("stopped")
         except Exception as e:
@@ -128,10 +128,10 @@ class Task():
 
         s.setState("stopped")
         if s.isRemoving() or s.autoremove:
-            s.setState("removed")
-            s.log.info("removed by flag")
             with Task.listTasksLock:
                 Task.listTasks.remove(s)
+            s.setState("removed")
+            s.log.info("removed by flag")
 
 
     def stop(s):
@@ -139,6 +139,15 @@ class Task():
             return
         s.log.info("stopping")
         s.setState("stopping")
+
+
+    def restart(s):
+        s.stop()
+        while 1:
+            s.sleep(100)
+            if s.state() == "stopped":
+                break
+        s.start()
 
 
     def pause(s):
@@ -261,6 +270,7 @@ class Task():
         tid = threading.get_ident()
         task = Task.taskByTid(tid)
         if not task:
+            print("sleep in not task %d" % interval)
             time.sleep(interval / 1000)
             return
 
@@ -325,6 +335,21 @@ class Task():
             task.remove()
 
         task.setCb(timeout)
+        task.start()
+        return task
+
+
+    @staticmethod
+    def setPeriodic(name, interval, cb):
+        task = Task('periodic_task_%s' % name)
+
+        def do():
+            nonlocal task
+            while 1:
+                task.sleep(interval)
+                cb()
+
+        task.setCb(do)
         task.start()
         return task
 

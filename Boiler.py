@@ -34,17 +34,16 @@ class Boiler():
         s.task = Task('boiler', s.stopHw)
         s.task.setCb(s.doTask)
         s.telegram = Telegram('boiler') # TODO
-        s.ui = UiNotifier(s.conf)
+        s.ui = UiNotifier('boiler', s.conf.uiServerHost,
+                          s.conf.uiServerPort, s.conf.boilerHost)
         s.httpServer = HttpServer(s.conf.httpListenHost, s.conf.httpListenPort)
         s.httpServer.setReqCb("GET", "/mbio/stat", s.httpReqMbioStat)
         s.httpServer.setReqCb("GET", "/boiler/stat", s.httpReqStat)
         s.httpServer.setReqCb("GET", "/boiler/reset_stat", s.httpReqResetStat)
-        s.httpServer.setReqCb("GET", "/boiler/setup", s.httpReqSutup) #TODO
-        s.httpServer.setReqCb("GET", "/boiler/start", s.httpReqStart)
-        s.httpServer.setReqCb("GET", "/boiler/stop", s.httpReqStop)
-        s.httpServer.setReqCb("GET", "/boiler/enable_power", s.httpReqEnablePower)
-        s.httpServer.setReqCb("GET", "/boiler/enable_fun_heater", s.httpReqEnableFunHeater)
-        s.httpServer.setReqCb("GET", "/boiler/disable_fun_heater", s.httpReqDisableFunHeater)
+        s.httpServer.setReqCb("GET", "/boiler/set_target_t", s.httpReqSetTarget_t)
+        s.httpServer.setReqCb("GET", "/boiler/enable", s.httpReqEnable)
+        s.httpServer.setReqCb("GET", "/boiler/fun_heater_enable", s.httpReqEnableFunHeater)
+        s.httpServer.setReqCb("GET", "/boiler/fun_heater_disable", s.httpReqDisableFunHeater)
         s.io.setHwEnableCb(s.hwEnableCb)
         s.io.setHwEventsCb(s.updateUi)
         s.io.setFlameBurningCb(s.updateUi)
@@ -361,7 +360,7 @@ class Boiler():
         if s.io.isFuelPumpEnabled():
             s.io.fuelPumpDisable()
 
-        s.io.ignitionRel/ayDisable()
+        s.io.ignitionRelayDisable()
         s.io.funHeaterDisable()
         s.tcBurning.stop()
         s.saveHeatingTime()
@@ -471,7 +470,7 @@ class Boiler():
         s.tcBurning.stop()
         s.saveHeatingTime()
         s.io.airFunEnable(30000)
-        Task.sleep(3000)
+        Task.sleep(1000) # TODO
         s.log.info("stop heating")
         s.ui.notify('info', "stop heating")
 
@@ -590,7 +589,7 @@ class Boiler():
             s.store.save()
 
 
-    def httpReqStat(s, args, body):
+    def httpReqStat(s, args, body, attrs, conn):
         data = {}
         data['state'] = s.state()
         data['target_boiler_t_max'] = s.targetBoilerMax_t()
@@ -611,7 +610,7 @@ class Boiler():
         return json.dumps(data)
 
 
-    def httpReqMbioStat(s, args, body):
+    def httpReqMbioStat(s, args, body, attrs, conn):
         f = os.popen('uptime')
         c = f.read()
         f.close()
@@ -632,30 +631,21 @@ class Boiler():
         return json.dumps(data)
 
 
-    def httpReqResetStat(s, args, body):
+    def httpReqResetStat(s, args, body, attrs, conn):
         s.resetStatistics()
         s.log.debug('reset statistics by http request')
         return json.dumps({"status": "ok"})
 
 
-    def httpReqSutup(s, args, body):
-        if not args:
+    def httpReqSetTarget_t(s, args, body, attrs, conn):
+        if not 't' in args:
             return json.dumps({"status": "error",
-                               "reason": "incorrect arguments"})
-
-        if 'target_boiler_t_max' in args:
-            s.setTargetBoilerMax_t(args['target_boiler_t_max'])
-
-        if 'target_boiler_t_min' in args:
-            s.setTargetBoilerMin_t(args['target_boiler_t_min'])
-
-        if 'target_room_t' in args:
-            s.setTargetRoom_t(args['target_room_t'])
-
+                               "reason": "argument 't' is absent"})
+        s.setTargetRoom_t(args['t'])
         return json.dumps({"status": "ok"})
 
 
-    def httpReqStart(s, args, body):
+    def httpReqEnable(s, args, body, attrs, conn):
         rc = s.start()
         if not rc:
             return json.dumps({"status": "error"}) #TODO
@@ -663,29 +653,16 @@ class Boiler():
         return json.dumps({"status": "ok"})
 
 
-    def httpReqStop(s, args, body):
-        s.stop()
-        s.telegram.send('Котёл остановлен по REST запросу')
-        return json.dumps({"status": "ok"})
-
-
-    def httpReqEnablePower(s, args, body):
-        s.enableMainPower()
-        s.telegram.send('Произведена попытка включения питания котла по REST запросу')
-        return json.dumps({"status": "ok"})
-
-
-    def httpReqEnableFunHeater(s, args, body):
+    def httpReqEnableFunHeater(s, args, body, attrs, conn):
+        s.io.funHeaterEnable()
         s.telegram.send('Тепло-вентилятор включен по REST запросу')
-        s.funHeaterEnable()
         return json.dumps({"status": "ok"})
 
 
-    def httpReqDisableFunHeater(s, args, body):
-        s.funHeaterDisable()
+    def httpReqDisableFunHeater(s, args, body, attrs, conn):
+        s.io.funHeaterDisable()
         s.telegram.send('Тепло-вентилятор отключен по REST запросу')
         return json.dumps({"status": "ok"})
-
 
 
     def __str__(s):

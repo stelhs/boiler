@@ -39,6 +39,8 @@ class TermoSensor():
     def do(s):
         while True:
             Task.sleep(1000)
+            if s._fake:
+                continue
             try:
                 of = open("/sys/bus/w1/devices/%s/w1_slave" % s.addr, "r")
                 for i in range(10):

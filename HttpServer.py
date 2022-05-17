@@ -174,6 +174,7 @@ class HttpConnection():
                 if not len(poll_list):
                     continue
 
+                data = None;
                 try:
                     data = s._conn.recv(65535)
                 except:
@@ -299,12 +300,14 @@ class HttpConnection():
         header = "HTTP/1.1 200 OK\r\n"
         header += "Content-Type: %s\r\n" % ctype
         header += "Content-Length: %d\r\n" % len(data)
+        if s._keep_alive:
+            header += "Connection: Keep-Alive\r\n"
         header += "\r\n"
         headerBytes = header.encode('utf-8')
         try:
             s._conn.send(headerBytes + data)
-        except:
-            pass
+        except Exception as e:
+            s.log.err("respOk error: %s" % e)
 
 
     def respBadRequest(s, data = ""):
@@ -320,8 +323,8 @@ class HttpConnection():
         headerBytes = header.encode('utf-8')
         try:
             s._conn.send(headerBytes + data)
-        except:
-            pass
+        except Exception as e:
+            s.log.err("respBadRequest error: %s" % e)
 
 
     def resp404(s):
@@ -335,6 +338,6 @@ class HttpConnection():
         headerBytes = header.encode('utf-8')
         try:
             s._conn.send(headerBytes + data)
-        except:
-            pass
+        except Exception as e:
+            s.log.err("resp404 error: %s" % e)
 

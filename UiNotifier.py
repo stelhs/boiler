@@ -7,8 +7,12 @@ from HttpServer import *
 
 
 class UiNotifier():
-    def __init__(s, conf):
-        s.conf = conf
+    def __init__(s, uiSubsystemName, uiServerHost, uiServerPort, clientHost):
+        s.clientHost = clientHost
+        s.uiServerHost = uiServerHost
+        s.uiServerPort = uiServerPort
+        s.uiSubsystemName = uiSubsystemName
+
         s.lock = threading.Lock()
 
         s.conn = None
@@ -62,13 +66,13 @@ class UiNotifier():
         if not s.conn:
             return False
 
-        d = {'sender': 'boiler',
+        d = {'subsytem': s.uiSubsystemName,
              'type': type,
              'data': data}
         payload = json.dumps(d)
 
         header = "POST /send_event http/1.1\r\n"
-        header += "Host: %s\r\n" % s.conf.boilerHost
+        header += "Host: %s\r\n" % s.clientHost
         header += "Connection: keep-alive\r\n"
         header += "Content-Type: text/json\r\n"
         header += "Content-Length: %s\r\n" % len(payload.encode('utf-8'))
@@ -123,7 +127,7 @@ class UiNotifier():
             return
         try:
             s.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.conn.connect((s.conf.uiServerHost, s.conf.uiServerPort))
+            s.conn.connect((s.uiServerHost, s.uiServerPort))
         except:
             s.conn = None
             s.log.err('can`t connect to UI server')
