@@ -2,32 +2,32 @@ import socket
 import threading
 import json
 from Task import *
-from Settings import *
+from Exceptions import *
 from HttpServer import *
 
 
-class UiNotifier():
+class SkynetNotifier():
     def __init__(s, uiSubsystemName, uiServerHost, uiServerPort, clientHost):
         s.clientHost = clientHost
         s.uiServerHost = uiServerHost
         s.uiServerPort = uiServerPort
         s.uiSubsystemName = uiSubsystemName
-
-        s.lock = threading.Lock()
-
+        s.log = Syslog('SkynetNotifier')
         s.conn = None
         s.notifyQueue = []
-        s.task = Task('ui_notifyer', s.close)
+
+        s.lock = threading.Lock()
+        s.task = Task('SkynetNotifier_task', s.close)
         s.task.setCb(s.doTask)
         s.task.start()
-        s.log = Syslog('ui_notifyer')
 
 
     def doTask(s):
         while 1:
             if not s.isConnected():
-                rc = s.connect()
-                if not rc:
+                try:
+                    s.connect()
+                except SkynetNotifierConnectionError:
                     Task.sleep(3000)
                     continue
 
@@ -45,10 +45,12 @@ class UiNotifier():
 
             with s.lock:
                 queue = s.notifyQueue
+
             for item in queue:
-                (type, data) = item
-                rc = s.send(type, data)
-                if not rc:
+                try:
+                    (type, data) = item
+                    s.send(type, data)
+                except SkynetNotifierError:
                     s.close()
                     continue
 
@@ -66,7 +68,7 @@ class UiNotifier():
         if not s.conn:
             return False
 
-        d = {'subsytem': s.uiSubsystemName,
+        d = {'source': s.uiSubsystemName,
              'type': type,
              'data': data}
         payload = json.dumps(d)
@@ -79,47 +81,37 @@ class UiNotifier():
         header += "\r\n"
         try:
             s.conn.send((header + payload).encode('utf-8'))
-        except:
-            s.log.err('can`t sending data to UI server: "%s"' % payload)
-            return False
-
-#        s.log.info('sended to UI: %s' % payload)
-
-        try:
             resp = s.conn.recv(16535).decode()
         except Exception as e:
-            s.log.err("Can't receive from socket: %s" % e)
-            return False
+            raise SkynetNotifierSendError(s.log,
+                        "Can`t sending event data to Skynet server: %s" % e)
 
         parts = HttpServer.parseHttpResponce(resp)
         if not parts:
-            s.log.err('No valid responce from UI server: %s' % resp)
-            return False
+            raise SkynetNotifierResponseError(s.log,
+                        'No valid responce from UI server: %s' % resp)
 
-        version, respCode, respCodeText, attrs, body = parts
+        version, respCode, attrs, body = parts
         if version != 'HTTP/1.1':
-            s.log.err('Incorrect version of HTTP protocol: %s' % version)
-            return False
+            raise SkynetNotifierResponseError(s.log,
+                        'Incorrect version of HTTP protocol: %s' % version)
 
         if respCode != '200':
-            s.log.err('Incorrect responce code: %s' % respCode)
-            return False
+            raise SkynetNotifierResponseError(s.log,
+                        'Incorrect responce code: %s' % respCode)
 
         try:
             jsonResp = json.loads(body)
-        except Exception as e:
-            s.log.err("Can't decode responce as JSON: %s" % body)
-            return False
+            if jsonResp['status'] != 'ok':
+                s.log.err("status is not OK: %s" % body)
+                return False
 
-        if not 'status' in jsonResp:
-            s.log.err("field 'status' is absent in responce: %s" % body)
-            return False
-
-        if jsonResp['status'] != 'ok':
-            s.log.err("status is not OK: %s" % body)
-            return False
-
-        return True
+        except KeyError as e:
+            raise SkynetNotifierResponseError(s.log,
+                        "field '%s' is absent in responce" % e)
+        except JSONDecodeError as e:
+            raise SkynetNotifierResponseError(s.log,
+                        "Can't decode responce as JSON: %s" % body)
 
 
     def connect(s):
@@ -128,12 +120,10 @@ class UiNotifier():
         try:
             s.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.conn.connect((s.uiServerHost, s.uiServerPort))
-        except:
+        except Exception as e:
             s.conn = None
-            s.log.err('can`t connect to UI server')
-            return False
-
-        return True
+            raise SkynetNotifierConnectionError(s.log,
+                    'Can`t connect to Skynet server: %s' % e) from e
 
 
     def isConnected(s):

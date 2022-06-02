@@ -1,19 +1,16 @@
-from TermoSensor import *
+from TermoSensorDs18b20 import *
 from Gpio import *
 
 
 class HwIo():
     def __init__(s):
         s.hwEventsCb = None
-        if os.path.isdir("FAKE"):
-            Gpio.gpioMode = 'fake'
-            TermoSensor.sensorMode = 'fake'
+        s.log = Syslog('HwIo')
 
-        s._boilerTermo = TermoSensor("28-012033e26477", "boiler")
-        s._retTermo = TermoSensor("28-012033e45839", "return_water")
-        s._roomTermo = TermoSensor("28-012033f3fd8f", "room")
-        s._boilerInside = TermoSensor("28-012033f9c648", "boiler_inside")
-#        s._exhaustGasTermo = TermoSensor("28-012033f9c640", "exhaust_gas")
+        s._boilerTermo = TermoSensorDs18b20("28-012033e26477")
+        s._retTermo = TermoSensorDs18b20("28-012033e45839")
+        s._roomTermo = TermoSensorDs18b20("28-012033f3fd8f")
+        s._boilerInside = TermoSensorDs18b20("28-012033f9c648")
 
 
         s._gpioIn = {"overHearting": Gpio(8, 'over_heating', 'in'),
@@ -28,7 +25,6 @@ class HwIo():
                       "funHeater": Gpio(16, 'fun_heater', 'out'),
                       "mainPower": Gpio(13, 'main_power', 'out')}
 
-        s.log = Syslog('HwIo')
         Gpio.startEvents()
 
         s.airFunDisable()
@@ -66,11 +62,6 @@ class HwIo():
         return s._boilerInside.t()
 
 
-    def exhaustGas_t(s):
-        return 0
-        #return s._exhaustGasTermo.t()
-
-
     def isOverHearting(s):
         return bool(s._gpioIn['overHearting'].value())
 
@@ -90,17 +81,17 @@ class HwIo():
     def waterPumpEnable(s, timeout = 0):
         g = s._gpioOut['waterPump']
         g.setValue(1)
-        s.log.info('water pump enable')
+        s.log.debug('water pump enable')
         if s.hwEventsCb:
             s.hwEventsCb()
         if timeout:
-            s.log.info('water pump will disabled by timeout %dmS' % timeout)
+            s.log.debug('water pump will disabled by timeout %dmS' % timeout)
             g.setValueTimeout(0, timeout)
 
 
     def waterPumpDisable(s):
         s._gpioOut['waterPump'].setValue(0)
-        s.log.info('water pump disable')
+        s.log.debug('water pump disable')
         if s.hwEventsCb:
             s.hwEventsCb()
 
@@ -212,7 +203,6 @@ class HwIo():
         str += "Return water temperature: %.1f\n" % s.retWater_t()
         str += "Room temperature: %.1f\n" % s.room_t()
         str += "Boiler inside temperature: %.1f\n" % s.boilerInside_t()
-        str += "Exchause Gas temperature: %.1f\n" % s.exhaustGas_t()
 
         str += "isOverHearting: %s\n" % s.isOverHearting()
         str += "isHwEnabled: %s\n" % s.isHwEnabled()

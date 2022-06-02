@@ -1,3 +1,7 @@
+import sys
+sys.path.append('sr90lib/')
+sys.path.append('src/')
+
 from math import *
 import rlcompleter, readline
 readline.parse_and_bind('tab:complete')
