@@ -34,8 +34,7 @@ class Boiler():
         s.store = Store() # TODO
         s.log = Syslog("Boiler")
 
-        s.task = Task('boiler', s.stopHw)
-        s.task.setCb(s.doTask)
+        s.task = Task('boiler', s.doTask, s.stopHw)
 
         s.tc = TelegramClient(s.conf.telegram)
         Task.setErrorCb(s.taskExceptionHandler)
@@ -519,7 +518,7 @@ class Boiler():
                 msg = 'Нагрев завершен'
             s.tgSendAdmin("%s, время нагрева: %s\n"
                             "Температура в мастерской: %.1f градусов" %
-                                (msg, timeStr(s.tcBurning.duration()), s.room_t))
+                                (msg, timeDurationStr(s.tcBurning.duration()), s.room_t))
 
             s.stopHeating()
             s.setState("WAITING")
@@ -604,8 +603,8 @@ class Boiler():
             str += "current return water t: %.1f\n" % s.returnWater_t
             str += "target room t: %.1f - %.1f\n" % (s.targetRoomMin_t(), s.targetRoomMax_t())
             str += "current room t: %.1f\n" % s.room_t
-            str += "current burning time: %s\n" % timeStr(s.tcBurning.duration())
-            str += "total burning time: %s\n" % timeStr(s.burningTimeTotal())
+            str += "current burning time: %s\n" % timeDurationStr(s.tcBurning.duration())
+            str += "total burning time: %s\n" % timeDurationStr(s.burningTimeTotal())
             str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
@@ -643,7 +642,13 @@ class Boiler():
 
 
         def setTargetTemperatureHandler(s, args, body, attrs, conn):
-            s.boiler.setTargetRoom_t(args['t'])
+            try:
+                t = float(args['t'])
+                if t < 2.0 or t > 35.0:
+                    raise HttpHandlerError("Incorrect temperature %.1f" % t)
+                s.boiler.setTargetRoom_t(args['t'])
+            except ValueError as e:
+                raise HttpHandlerError("Incorrect temperature %s" % args['t'])
 
 
         def startHandler(s, args, body, attrs, conn):

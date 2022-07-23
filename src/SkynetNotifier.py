@@ -17,8 +17,7 @@ class SkynetNotifier():
         s.notifyQueue = []
 
         s.lock = threading.Lock()
-        s.task = Task('SkynetNotifier_task', s.close)
-        s.task.setCb(s.doTask)
+        s.task = Task('SkynetNotifier_task', s.doTask, s.close)
         s.task.start()
 
 
