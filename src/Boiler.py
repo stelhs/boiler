@@ -9,6 +9,7 @@ from AveragerQueue import *
 from ConfBoiler import *
 from SkynetNotifier import *
 from TelegramClient import *
+from Storage import *
 import threading
 import json
 import os, re
@@ -24,14 +25,24 @@ class Boiler():
     _state = "STOPPED"
 
     def __init__(s):
+        s.lock = threading.Lock()
         s.fake = False
         if os.path.isdir("FAKE"):
             s.fake = True
 
         s.conf = ConfBoiler()
-        s.lock = threading.Lock()
+        s.storage = Storage('boiler.json', s.conf.boiler['storageDir'])
+        s._targetRoom_t = s.storage.key('/target_room_t', 18.0)
+        s._targetBoilerMin_t = s.storage.key('/target_boiler_min_t', 60)
+        s._targetBoilerMax_t = s.storage.key('/target_boiler_max_t', 80)
+        s._burningTime = s.storage.key('/burning_time', 0)
+        s._ignitionCounter = s.storage.key('/ignition_counter', 0)
+        s._boilerEnabled = s.storage.key('/enabled', False)
+        s.overageRoom_t = s.storage.key('/overage_room_t', {})
+        s.overageReturnWater_t = s.storage.key('/overage_return_water_t', {})
+
+
         s.io = HwIo()
-        s.store = Store() # TODO
         s.log = Syslog("Boiler")
 
         s.task = Task('boiler', s.doTask, s.stopHw)
@@ -68,7 +79,7 @@ class Boiler():
 
         s.task.start()
 
-        if s.store.valInt('enabled'):
+        if s._boilerEnabled.val:
             s.enableMainPower()
             s.start()
 
@@ -203,10 +214,13 @@ class Boiler():
         s._room_tIntegrator.clear()
         s._retWater_tIntegrator.clear()
 
-        with s.store.lock:
-            s.store.tree['overage_room_t'][hour] = overageRoom_t
-            s.store.tree['overage_return_water_t'][hour] = overageRetWater_t
-            s.store.save()
+        l = s.overageRoom_t.val
+        l[hour] = overageRoom_t
+        s.overageRoom_t.set(l)
+
+        l = s.overageReturnWater_t.val
+        l[hour] = overageRetWater_t
+        s.overageReturnWater_t.set(l)
 
 
     def evMinuteTick(s, minute):
@@ -215,16 +229,14 @@ class Boiler():
 
 
     def room_tOverage(s):
-        with s.store.lock:
-            queue = list(s.store.tree['overage_room_t'].values())
+        queue = list(s.overageRoom_t.val.values())
         aq = AveragerQueue(queue=queue)
         aq.push(s._room_tIntegrator.round())
         return aq.round()
 
 
     def returnWater_tOverage(s):
-        with s.store.lock:
-            queue = list(s.store.tree['overage_return_water_t'].values())
+        queue = list(s.overageReturnWater_t.val.values())
         aq = AveragerQueue(queue=queue)
         aq.push(s._retWater_tIntegrator.round())
         return aq.round()
@@ -266,36 +278,36 @@ class Boiler():
 
 
     def targetRoom_t(s):
-        return s.store.valFloat('target_room_t')
+        return float(s._targetRoom_t.val)
 
 
     def targetRoomMax_t(s):
-        return s.store.valFloat('target_room_t')
+        return float(s._targetRoom_t.val)
 
 
     def targetRoomMin_t(s):
-        return s.store.valFloat('target_room_t') - 0.5
+        return float(s._targetRoom_t.val) - 0.5
 
 
     def setTargetRoom_t(s, t):
-        s.store.setVal('target_room_t', t)
+        s._targetRoom_t.set(float(t))
         s.skynetSendUpdate()
 
 
     def targetBoilerMin_t(s):
-        return s.store.valFloat('target_boiler_min_t')
+        return float(s._targetBoilerMin_t.val)
 
 
     def setTargetBoilerMin_t(s, t):
-        s.store.setVal('target_boiler_min_t', t)
+        s._targetBoilerMin_t.set(float(t))
 
 
     def targetBoilerMax_t(s):
-        return s.store.valFloat('target_boiler_max_t')
+        return float(s._targetBoilerMax_t.val)
 
 
     def setTargetBoilerMax_t(s, t):
-        s.store.setVal('target_boiler_max_t', t)
+        s._targetBoilerMax_t.set(float(t))
 
 
     def enableMainPower(s):
@@ -306,7 +318,7 @@ class Boiler():
 
 
     def burningTimeTotal(s):
-        return s.store.valInt('burning_time')
+        return int(s._burningTime.val)
 
 
     def fuelConsumption(s):
@@ -320,14 +332,14 @@ class Boiler():
 
 
     def ignitionCounter(s):
-        return s.store.valInt('ignition_counter')
+        return int(s._ignitionCounter.val)
 
 
     def saveHeatingTime(s):
         burningTime = s.tcBurning.duration()
         s.tcBurning.reset()
         if burningTime:
-            s.store.increaseVal('burning_time', burningTime)
+            s._burningTime.set(s.burningTimeTotal() + burningTime)
         s.skynetSendUpdate()
 
 
@@ -344,7 +356,7 @@ class Boiler():
         if s.io.isOverHearting():
             raise BoilerError(s.log, "Can't start boiler, Boiler is overheating")
 
-        s.store.setVal('enabled', 1)
+        s._boilerEnabled.set(True)
         s.setState("WAITING")
         s.log.info("boiler started")
         s.sn.notify('info', "Котёл включен")
@@ -371,7 +383,7 @@ class Boiler():
         else:
             s.io.airFunDisable()
 
-        s.store.setVal('enabled', 0)
+        s._boilerEnabled.set(False)
 
         if s.io.isFunHeaterEnabled():
             s.io.funHeaterDisable()
@@ -392,7 +404,7 @@ class Boiler():
             s.log.info("the flame was stabilizated")
             s.sn.notify('info', 'Нагрев запущен')
             s.tgSendAdmin('Нагрев запущен')
-            s.store.incrementVal('ignition_counter')
+            s._ignitionCounter.set(int(s._ignitionCounter.val) + 1)
             s.setState("HEATING")
 
 
@@ -441,7 +453,7 @@ class Boiler():
                 s.sn.notify('info', 'Нагрев запущен')
                 s.tgSendAdmin('Нагрев запущен')
                 s.setState("HEATING")
-                s.store.incrementVal('ignition_counter')
+                s._ignitionCounter.set(int(s._ignitionCounter.val) + 1)
                 return True
 
         else:
@@ -551,9 +563,10 @@ class Boiler():
 
 
     def destroy(s):
-        s.sn.notify('info', "boiler.py process was killed")
         s.stopHw()
         s.httpServer.destroy()
+        s.storage.destroy()
+        s.sn.notify('info', "boiler.py process was killed")
 
 
     def tgSendAdmin(s, msg):
@@ -586,12 +599,10 @@ class Boiler():
 
     def resetStatistics(s):
         s.tcBurning.reset()
-        with s.store.lock:
-            s.store.tree['burning_time'] = 0
-            s.store.tree['ignition_counter'] = 0
-            s.store.tree['overage_room_t'] = {}
-            s.store.tree['overage_return_water_t'] = {}
-            s.store.save()
+        s._burningTime.set(0)
+        s._ignitionCounter.set(0)
+        s.overageRoom_t.set({})
+        s.overageReturnWater_t.set({})
 
 
     def __str__(s):
