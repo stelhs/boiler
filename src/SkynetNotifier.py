@@ -120,11 +120,11 @@ class SkynetNotifier():
         try:
             s.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.conn.connect((s.uiServerHost, s.uiServerPort))
+            s.conn.settimeout(2.0)
         except Exception as e:
             s.conn = None
             raise SkynetNotifierConnectionError(s.log,
                     'Can`t connect to Skynet server: %s' % e) from e
-        s.conn.settimeout(2.0)
 
 
     def isConnected(s):
