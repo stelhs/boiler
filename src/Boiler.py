@@ -1,6 +1,5 @@
 from Task import *
 from HwIo import *
-from Store import *
 from Syslog import *
 from Telegram import *
 from HttpServer import *
@@ -26,6 +25,7 @@ class Boiler():
 
     def __init__(s):
         s.lock = threading.Lock()
+#        Task.runObserveTasks()
         s.fake = False
         if os.path.isdir("FAKE"):
             s.fake = True
@@ -62,15 +62,18 @@ class Boiler():
 
         s.io.setHwEnableCb(s.hwEnableCb)
         s.io.setHwEventsCb(s.skynetSendUpdate)
-        s.io.setFlameBurningCb(s.skynetSendUpdate)
+        s.io.setFlameBurningCb(lambda gpio, st, pst: s.skynetSendUpdate())
 
         s._ignitTask = None
+        s.boiler_t = 0
+        s.returnWater_t = 0
 
         s.tcBurning = TimerCounter('burning_time')
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
-        s._checkDiffWater_t = Observ(lambda: (s.boiler_t - s.returnWater_t) > 2, s.evDiffWater_t, ignoreFirst=False)
+        s._checkDiffWater_t = Observ(lambda: s.boiler_t and s.returnWater_t and (s.boiler_t - s.returnWater_t) > 2,
+                                     s.evDiffWater_t, ignoreFirst=False)
         s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
 
@@ -103,7 +106,7 @@ class Boiler():
         s.io.funHeaterDisable()
 
 
-    def hwEnableCb(s, state, prevState):
+    def hwEnableCb(s, gpio, state, prevState):
         if state == 0 and prevState == 1:
             s.log.info('HW power is enabled')
             if s.io.isOverHearting():
@@ -647,12 +650,12 @@ class Boiler():
             s.httpServer.setReqHandler("GET", "/boiler/fun_heater_disable", s.disableFunHeaterHandler)
 
 
-        def resetStatHandler(s, args, body, attrs, conn):
+        def resetStatHandler(s, args, conn):
             s.boiler.log.debug('reset statistics by http request')
             s.boiler.resetStatistics()
 
 
-        def setTargetTemperatureHandler(s, args, body, attrs, conn):
+        def setTargetTemperatureHandler(s, args, conn):
             try:
                 t = float(args['t'])
                 if t < 2.0 or t > 35.0:
@@ -662,7 +665,7 @@ class Boiler():
                 raise HttpHandlerError("Incorrect temperature %s" % args['t'])
 
 
-        def startHandler(s, args, body, attrs, conn):
+        def startHandler(s, args, conn):
             if s.boiler.state() != "STOPPED":
                 raise HttpHandlerError("Boiler already started")
             if s.boiler.io.isHwEnabled():
@@ -676,12 +679,12 @@ class Boiler():
             Task.asyncRunSingle("enabling", doEnPower)
 
 
-        def enableFunHeaterHandler(s, args, body, attrs, conn):
+        def enableFunHeaterHandler(s, args, conn):
             s.boiler.io.funHeaterEnable()
             s.boiler.tgSendAdmin('Тепло-вентилятор включен по REST запросу')
 
 
-        def disableFunHeaterHandler(s, args, body, attrs, conn):
+        def disableFunHeaterHandler(s, args, conn):
             s.boiler.io.funHeaterDisable()
             s.boiler.tgSendAdmin('Тепло-вентилятор отключен по REST запросу')
 

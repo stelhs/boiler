@@ -23,6 +23,7 @@ class SkynetNotifier():
 
     def doTask(s):
         while 1:
+            Task.sleep(100)
             if not s.isConnected():
                 try:
                     s.connect()
@@ -123,6 +124,7 @@ class SkynetNotifier():
             s.conn = None
             raise SkynetNotifierConnectionError(s.log,
                     'Can`t connect to Skynet server: %s' % e) from e
+        s.conn.settimeout(2.0)
 
 
     def isConnected(s):
