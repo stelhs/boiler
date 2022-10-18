@@ -66,6 +66,7 @@ class Boiler():
 
         s._ignitTask = None
         s.boiler_t = 0
+        s.room_t = 0
         s.returnWater_t = 0
 
         s.tcBurning = TimerCounter('burning_time')
