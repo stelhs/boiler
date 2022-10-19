@@ -73,7 +73,7 @@ class Boiler():
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
         s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
-        s._checkDiffWater_t = Observ(lambda: s.boiler_t and s.returnWater_t and (s.boiler_t - s.returnWater_t) > 2,
+        s._checkDiffWater_t = Observ(lambda: s.boiler_t and s.returnWater_t and (s.boiler_t - s.returnWater_t) > 3,
                                      s.evDiffWater_t, ignoreFirst=False)
         s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
@@ -208,7 +208,7 @@ class Boiler():
         if result:
             s.io.waterPumpEnable()
         else:
-            s.io.waterPumpEnable(60000 * 5)
+            s.io.waterPumpEnable(60000 * 2)
 
 
     def evHourTick(s, hour):
