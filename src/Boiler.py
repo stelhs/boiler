@@ -250,7 +250,7 @@ class Boiler():
         if s.state() == "STOPPED":
             return
 
-        if s.room_t < -10 or s.room_t > 40:
+        if s.room_t and (s.room_t < -10 or s.room_t > 40):
             s.log.err("termosensor room_t is not correct, %.1f degree." % s.room_t)
             msg = "Ошибка термодатчика room_t, " \
                   "он показывает температуру: %.1f градусов. " \
@@ -260,7 +260,7 @@ class Boiler():
             s.stop()
             return
 
-        if s.boiler_t < -1 or s.boiler_t > 120:
+        if s.boiler_t and (s.boiler_t < -1 or s.boiler_t > 120):
             s.log.err("termosensor boiler_t is not correct, %.1f degree." % s.room_t)
             msg = "Ошибка термодатчика boiler_t, " \
                   "он показывает температуру: %.1f градусов. " \
@@ -270,7 +270,7 @@ class Boiler():
             s.stop()
             return
 
-        if s.returnWater_t < -1 or s.returnWater_t > 120:
+        if s.returnWater_t and (s.returnWater_t < -1 or s.returnWater_t > 120):
             s.log.err("termosensor returnWater_t is not correct, %.1f degree." % s.room_t)
             msg = "Ошибка термодатчика returnWater_t, " \
                   "он показывает температуру: %.1f градусов. " \
