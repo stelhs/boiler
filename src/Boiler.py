@@ -579,17 +579,20 @@ class Boiler():
 
 
     def skynetSendUpdate(s):
-        stat = {'state': str(s._state),
-                'power': str(s.io.isHwEnabled()),
-                'air_fun': str(s.io.isAirFunEnabled()),
-                'fuel_pump': str(s.io.isFuelPumpEnabled()),
-                'ignition': str(s.io.isIgnitionRelayEnabled()),
-                'water_pump': str(s.io.isWaterPumpEnabled()),
-                'flame': str(s.io.isFlameBurning()),
-                'heater': str(s.io.isFunHeaterEnabled()),
-                'no_pressure': str(not s.io.isPressureNormal()),
-                'overheat': str(s.io.isOverHearting()),
+        leds = {
+                'ledBoilerPower': str(s.io.isHwEnabled()),
+                'ledBoilerAirFun': str(s.io.isAirFunEnabled()),
+                'ledBoilerFuelPump': str(s.io.isFuelPumpEnabled()),
+                'ledBoilerIgnition': str(s.io.isIgnitionRelayEnabled()),
+                'ledBoilerWaterPump': str(s.io.isWaterPumpEnabled()),
+                'ledBoilerFlame': str(s.io.isFlameBurning()),
+                'ledBoilerHeater': str(s.io.isFunHeaterEnabled()),
+                'ledBoilerNoPressure': str(not s.io.isPressureNormal()),
+                'ledBoilerOverheat': str(s.io.isOverHearting()),
+                }
 
+        data = {
+                'state': str(s._state),
                 'target_t': str(s.targetRoom_t()),
                 'room_t': str(s.room_t),
                 'boiler_box_t': str(s.io.boilerInside_t()),
@@ -597,8 +600,10 @@ class Boiler():
                 'return_t': str(s.returnWater_t),
                 'ignition_counter': str(s.ignitionCounter()),
                 'fuel_consumption': str(s.fuelConsumption()),
-                };
-        s.sn.notify('boilerStatus', stat)
+                }
+
+        s.sn.notify('ledsUpdate', leds)
+        s.sn.notify('boilerState', data)
 
 
 
