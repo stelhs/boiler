@@ -370,7 +370,8 @@ class Boiler():
 
     def stop(s):
         if s.state() == "IGNITING":
-            s.stopIgnitFlameTask()
+            s._ignitTask.remove()
+            s._ignitTask = None
 
         if s.state() == "HEATING":
             s.stopHeating()
