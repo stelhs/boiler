@@ -40,7 +40,6 @@ class SkynetNotifier():
                     n = len(s.notifyQueue)
 
             if not n:
-                s.close()
                 continue
 
             with s.lock:

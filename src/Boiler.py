@@ -494,6 +494,9 @@ class Boiler():
 
 
     def doWaiting(s):
+        if not s.room_t or not s.boiler_t:
+            return
+
         if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoomMin_t():
             s.startHeating()
             return
@@ -580,26 +583,26 @@ class Boiler():
 
     def skynetSendUpdate(s):
         leds = {
-                'ledBoilerPower': str(s.io.isHwEnabled()),
-                'ledBoilerAirFun': str(s.io.isAirFunEnabled()),
-                'ledBoilerFuelPump': str(s.io.isFuelPumpEnabled()),
-                'ledBoilerIgnition': str(s.io.isIgnitionRelayEnabled()),
-                'ledBoilerWaterPump': str(s.io.isWaterPumpEnabled()),
-                'ledBoilerFlame': str(s.io.isFlameBurning()),
-                'ledBoilerHeater': str(s.io.isFunHeaterEnabled()),
-                'ledBoilerNoPressure': str(not s.io.isPressureNormal()),
-                'ledBoilerOverheat': str(s.io.isOverHearting()),
+                'ledBoilerPower': s.io.isHwEnabled(),
+                'ledBoilerAirFun': s.io.isAirFunEnabled(),
+                'ledBoilerFuelPump': s.io.isFuelPumpEnabled(),
+                'ledBoilerIgnition': s.io.isIgnitionRelayEnabled(),
+                'ledBoilerWaterPump': s.io.isWaterPumpEnabled(),
+                'ledBoilerFlame': s.io.isFlameBurning(),
+                'ledBoilerHeater': s.io.isFunHeaterEnabled(),
+                'ledBoilerNoPressure': not s.io.isPressureNormal(),
+                'ledBoilerOverheat': s.io.isOverHearting(),
                 }
 
         data = {
                 'state': str(s._state),
-                'target_t': str(s.targetRoom_t()),
-                'room_t': str(s.room_t),
-                'boiler_box_t': str(s.io.boilerInside_t()),
-                'boiler_t': str(s.boiler_t),
-                'return_t': str(s.returnWater_t),
-                'ignition_counter': str(s.ignitionCounter()),
-                'fuel_consumption': str(s.fuelConsumption()),
+                'target_t': s.targetRoom_t(),
+                'room_t': s.room_t,
+                'boiler_box_t': s.io.boilerInside_t(),
+                'boiler_t': s.boiler_t,
+                'return_t': s.returnWater_t,
+                'ignition_counter': s.ignitionCounter(),
+                'fuel_consumption': s.fuelConsumption(),
                 }
 
         s.sn.notify('ledsUpdate', leds)
