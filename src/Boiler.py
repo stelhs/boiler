@@ -33,8 +33,6 @@ class Boiler():
         s.conf = ConfBoiler()
         s.storage = Storage('boiler.json', s.conf.boiler['storageDir'])
         s._targetRoom_t = s.storage.key('/target_room_t', 18.0)
-        s._targetBoilerMin_t = s.storage.key('/target_boiler_min_t', 60)
-        s._targetBoilerMax_t = s.storage.key('/target_boiler_max_t', 80)
         s._burningTime = s.storage.key('/burning_time', 0)
         s._ignitionCounter = s.storage.key('/ignition_counter', 0)
         s._boilerEnabled = s.storage.key('/enabled', False)
@@ -298,22 +296,6 @@ class Boiler():
         s.skynetSendUpdate()
 
 
-    def targetBoilerMin_t(s):
-        return float(s._targetBoilerMin_t.val)
-
-
-    def setTargetBoilerMin_t(s, t):
-        s._targetBoilerMin_t.set(float(t))
-
-
-    def targetBoilerMax_t(s):
-        return float(s._targetBoilerMax_t.val)
-
-
-    def setTargetBoilerMax_t(s, t):
-        s._targetBoilerMax_t.set(float(t))
-
-
     def enableMainPower(s):
         s.io.mainPowerRelayEnable()
         Task.sleep(500)
@@ -497,7 +479,7 @@ class Boiler():
         if not s.room_t or not s.boiler_t:
             return
 
-        if s.boiler_t <= s.targetBoilerMin_t() and s.room_t < s.targetRoomMin_t():
+        if s.boiler_t <= s.conf.boiler['targetBoilerMinT'] and s.room_t < s.targetRoomMin_t():
             s.startHeating()
             return
 
@@ -515,13 +497,13 @@ class Boiler():
             return
 
 
-        if s.boiler_t >= s.targetBoilerMax_t() or s.room_t >= s.targetRoomMax_t():
+        if s.boiler_t >= s.conf.boiler['targetBoilerMaxT'] or s.room_t >= s.targetRoomMax_t():
             if s.room_t < s.targetRoomMin_t() and s.tcBurning.duration() < 20:
                 s.log.err("The boiler has reached the temperature %.1f "
-                            "is very too quickly" % s.targetBoilerMax_t())
+                            "is very too quickly" % s.conf.boiler['targetBoilerMaxT'])
                 msg = "Котёл набрал температуру до %.1f градусов " \
                       "слишком быстро (за %d секунд), " \
-                      "Котёл остановлен." % (s.targetBoilerMax_t(),
+                      "Котёл остановлен." % (s.conf.boiler['targetBoilerMaxT'],
                                              s.tcBurning.duration())
                 s.sn.notify('error', msg)
                 s.tgSendAdmin(msg)
@@ -532,7 +514,7 @@ class Boiler():
                 if s.io.isFunHeaterEnabled():
                     s.io.funHeaterEnable(20000)
 
-            if s.boiler_t >= s.targetBoilerMax_t():
+            if s.boiler_t >= s.conf.boiler['targetBoilerMaxT']:
                 msg = 'Нагрев прерван из за превышения температуры котла'
             else:
                 msg = 'Нагрев завершен'
@@ -544,7 +526,8 @@ class Boiler():
             s.setState("WAITING")
             return
 
-        if (s.returnWater_t >= 50 and s.boiler_t >= 80
+        if (s.returnWater_t >= s.conf.boiler['funHeater']['retWaterT']
+                and s.boiler_t >= s.conf.boiler['funHeater']['boilerT']
                 and not s.io.isFunHeaterEnabled()):
             s.io.funHeaterEnable()
 
@@ -621,8 +604,6 @@ class Boiler():
     def __str__(s):
         str = "Boiler state: %s\n" % s.state()
         if s.state() != "STOPPED":
-            str += "target boiler t max: %.1f\n" % s.targetBoilerMax_t()
-            str += "target boiler t min: %.1f\n" % s.targetBoilerMin_t()
             str += "current boiler t: %.1f\n" % s.boiler_t
             str += "current return water t: %.1f\n" % s.returnWater_t
             str += "target room t: %.1f - %.1f\n" % (s.targetRoomMin_t(), s.targetRoomMax_t())
