@@ -216,21 +216,19 @@ class Boiler():
     def evHourTick(s, hour):
         try:
             overageRoom_t = s._room_tIntegrator.round()
-            s._room_tIntegrator.clear()
-            l = s.overageRoom_t.val
-            l[hour] = overageRoom_t
-            s.overageRoom_t.set(l)
+            overageRetWater_t = s._retWater_tIntegrator.round()
         except AveragerQueueEmptyError:
             pass
 
-        try:
-            overageRetWater_t = s._retWater_tIntegrator.round()
-            s._retWater_tIntegrator.clear()
-            l = s.overageReturnWater_t.val
-            l[hour] = overageRetWater_t
-            s.overageReturnWater_t.set(l)
-        except AveragerQueueEmptyError:
-            pass
+        s._room_tIntegrator.clear()
+        l = s.overageRoom_t.val
+        l[hour] = overageRoom_t
+        s.overageRoom_t.set(l)
+
+        s._retWater_tIntegrator.clear()
+        l = s.overageReturnWater_t.val
+        l[hour] = overageRetWater_t
+        s.overageReturnWater_t.set(l)
 
 
     def evMinuteTick(s, minute):
@@ -573,6 +571,39 @@ class Boiler():
             return s._state
 
 
+    def stat(s):
+        data = {'state': s.state(),
+                'hwPowerState': s.io.isHwEnabled(),
+                'target_t': s.targetRoom_t(),
+                'ignitionCounter': s.ignitionCounter(),
+                'fuelConsumption': s.fuelConsumption(),
+                'overageRoom_t': s.overageRoom_t.val,
+                'overageReturnWater_t': s.overageReturnWater_t.val,
+                'overHeartingState': s.io.isOverHearting(),
+                'pressureState': s.io.isPressureNormal(),
+                'funHeaterState': s.io.isFunHeaterEnabled()}
+
+        try:
+            data['room_t'] = s.io.room_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        try:
+            data['boiler_t'] = s.io.boiler_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        try:
+            data['return_t'] = s.io.retWater_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        if s.state() == 'STOPPED' and s.stopReason:
+            data['stopReason'] = stopReason
+        return data
+
+
+
     def destroy(s):
         s.stopHw()
         s.httpServer.destroy()
@@ -688,6 +719,7 @@ class Boiler():
             s.httpServer.setReqHandler("GET", "/boiler/start", s.startHandler)
             s.httpServer.setReqHandler("GET", "/boiler/fun_heater_enable", s.enableFunHeaterHandler)
             s.httpServer.setReqHandler("GET", "/boiler/fun_heater_disable", s.disableFunHeaterHandler)
+            s.httpServer.setReqHandler("GET", "/boiler/stat", s.statHandler)
 
 
         def toAdmin(s, msg):
@@ -733,6 +765,10 @@ class Boiler():
         def disableFunHeaterHandler(s, args, conn):
             s.boiler.io.funHeaterDisable()
             s.toAdmin('Тепло-вентилятор отключен по REST запросу')
+
+
+        def statHandler(s, args, conn):
+            return s.boiler.stat()
 
 
 
