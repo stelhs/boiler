@@ -7,11 +7,10 @@ class HwIo():
         s.hwEventsCb = None
         s.log = Syslog('HwIo')
 
-        s._boilerTermo = TermoSensorDs18b20("28-012033e26477")
-        s._retTermo = TermoSensorDs18b20("28-012033e45839")
-        s._roomTermo = TermoSensorDs18b20("28-012033f3fd8f")
-        s._boilerInside = TermoSensorDs18b20("28-012033f9c648")
-
+        s._boilerTermo = TermoSensorDs18b20("28-012033e26477", minT=-5, maxT=120)
+        s._retTermo = TermoSensorDs18b20("28-012033e45839", minT=-5, maxT=120)
+        s._roomTermo = TermoSensorDs18b20("28-012033f3fd8f", minT=-10, maxT=40)
+        s._boilerInside = TermoSensorDs18b20("28-012033f9c648", minT=-5, maxT=70)
 
         s._gpioIn = {"overHearting": Gpio(8, 'over_heating', 'in'),
                      "hwEnable": Gpio(9, 'hw_enable', 'in'),

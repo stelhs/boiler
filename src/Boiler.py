@@ -16,16 +16,16 @@ import datetime
 
 
 class Boiler():
-    # states:
-    #   STOPPED
-    #   WAITING
-    #   IGNITING
-    #   HEATING
-    _state = "STOPPED"
-
     def __init__(s):
         s.lock = threading.Lock()
-#        Task.runObserveTasks()
+        s.stopReason = ""
+
+        s._state = "STOPPED"
+                #   STOPPED
+                #   WAITING
+                #   IGNITING
+                #   HEATING
+
         s.fake = False
         if os.path.isdir("FAKE"):
             s.fake = True
@@ -41,6 +41,9 @@ class Boiler():
 
 
         s.io = HwIo()
+        print("waiting hardware initialization")
+        Task.sleep(2000)
+
         s.log = Syslog("Boiler")
 
         s.task = Task('boiler', s.doTask, s.stopHw)
@@ -63,16 +66,14 @@ class Boiler():
         s.io.setFlameBurningCb(lambda gpio, st, pst: s.skynetSendUpdate())
 
         s._ignitTask = None
-        s.boiler_t = 0
-        s.room_t = 0
-        s.returnWater_t = 0
 
         s.tcBurning = TimerCounter('burning_time')
         s._checkOverHeating = Observ(lambda: s.io.isOverHearting(), s.evOverHeating)
-        s._checkWaterIsCold = Observ(lambda: s.returnWater_t, s.evWaterIsCold)
+
+        s._checkWaterIsCold = Observ(lambda: s.io.retWater_t(), s.evWaterIsCold)
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
-        s._checkDiffWater_t = Observ(lambda: s.boiler_t and s.returnWater_t and (s.boiler_t - s.returnWater_t) > 3,
-                                     s.evDiffWater_t, ignoreFirst=False)
+        s._checkDiffWater_t = Observ(lambda: (s.io.boiler_t() - s.io.retWater_t()) > 3,
+                                     s.evWaterPumpSwitcher, ignoreFirst=False)
         s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
 
@@ -88,14 +89,13 @@ class Boiler():
         s.skynetSendUpdate()
         s.log.info("Initialization finished")
 
-        msg = 'Котёл перезапущен'
-        s.tc.sendToChat('stelhs', msg)
+        msg = 'ПО котла запущено'
+        s.toAdmin('ПО котла запущено')
         s.sn.notify('info', msg)
 
 
     def taskExceptionHandler(s, task, errMsg):
-        s.tc.sendToChat('stelhs',
-                "Boiler: task '%s' error:\n%s" % (task.name(), errMsg))
+        s.toAdmin("Boiler: task '%s' error:\n%s" % (task.name(), errMsg))
 
 
     def stopHw(s):
@@ -112,7 +112,7 @@ class Boiler():
                 msg = 'Boiler is overHeating'
                 s.log(msg)
                 s.sn.notify('error', msg)
-                s.stop()
+                s.stop(msg)
                 return
 
             s.start()
@@ -123,10 +123,10 @@ class Boiler():
             if s.state() == "STOPPED":
                 return
 
-            s.stop()
+            s.stop('Boiler stopped by external button')
             msg = 'Отсуствует питание горелки. Котёл остановлен'
             s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
+            s.toAdmin(msg)
 
 
     def doTask(s):
@@ -134,20 +134,24 @@ class Boiler():
         while(1):
             msg = s.task.message()
             if msg:
-                if msg == "stop":
-                    s.stop()
-                    s.tgSendAdmin("Котёл остановлен")
+                if msg['cmd'] == "stop":
+                    s.stop(msg['reason'])
+                    s.toAdmin("Котёл остановлен")
 
-            s.room_t = s.io.room_t()
-            s.boiler_t = s.io.boiler_t()
-            s.returnWater_t = s.io.retWater_t()
             s.skynetSendUpdate()
 
             s._checkOverHeating()
-            s._checkWaterIsCold()
+            try:
+                s._checkWaterIsCold()
+            except TermoSensorDs18b20.Error as e:
+                s.toAdmin("Глючит датчик температуры обратки: %s" % e)
+
             s._checkWaterPressure()
-            s._checkDiffWater_t()
-            s.checkTermoSensors()
+            try:
+                s._checkDiffWater_t()
+            except TermoSensorDs18b20.Error as e:
+                s.toAdmin("Глючит датчик температуры: %s" % e)
+
             s._hour()
             s._minute()
 
@@ -166,12 +170,12 @@ class Boiler():
         s.log.err("Over Heating!")
         msg = "Пропало питание, возможно перегрев котла!"
         if s.state() != "STOPPED":
-            s.stop()
+            s.stop('Boier power is absent. Maybe over heating')
             s.io.funHeaterEnable(5 * 60 * 1000)
             msg += " Котёл остановлен."
 
         s.sn.notify('error', msg)
-        s.tgSendAdmin(msg)
+        s.toAdmin(msg)
 
 
     def evWaterIsCold(s, returnWater_t):
@@ -179,7 +183,7 @@ class Boiler():
             msg = "Температура теплоносителя упала " \
                   "до %.1f градусов!" % returnWater_t
             s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
+            s.toAdmin(msg)
             s.log.err("returnWater_t failing down to %.1f degree" % returnWater_t)
 
 
@@ -188,21 +192,21 @@ class Boiler():
         if isWaterPressureNormal:
             msg = "Давление в системе отопления восстановлено"
             s.sn.notify('info', msg)
-            s.tgSendAdmin(msg)
+            s.toAdmin(msg)
             s.log.info("Water pressure go to normal")
             return
 
         s.log.err("Falling water pressure")
         msg = "Упало давление в системе отопления!"
         if s.state() != "STOPPED":
-            s.stop()
+            s.stop('Low water pressure')
             msg += " Котёл остановлен."
         s.sn.notify('error', msg)
-        s.tgSendAdmin(msg)
+        s.toAdmin(msg)
         return
 
 
-    def evDiffWater_t(s, result):
+    def evWaterPumpSwitcher(s, result):
         if result:
             s.io.waterPumpEnable()
         else:
@@ -210,24 +214,31 @@ class Boiler():
 
 
     def evHourTick(s, hour):
-        overageRoom_t = s._room_tIntegrator.round()
-        overageRetWater_t = s._retWater_tIntegrator.round()
+        try:
+            overageRoom_t = s._room_tIntegrator.round()
+            s._room_tIntegrator.clear()
+            l = s.overageRoom_t.val
+            l[hour] = overageRoom_t
+            s.overageRoom_t.set(l)
+        except AveragerQueueEmptyError:
+            pass
 
-        s._room_tIntegrator.clear()
-        s._retWater_tIntegrator.clear()
-
-        l = s.overageRoom_t.val
-        l[hour] = overageRoom_t
-        s.overageRoom_t.set(l)
-
-        l = s.overageReturnWater_t.val
-        l[hour] = overageRetWater_t
-        s.overageReturnWater_t.set(l)
+        try:
+            overageRetWater_t = s._retWater_tIntegrator.round()
+            s._retWater_tIntegrator.clear()
+            l = s.overageReturnWater_t.val
+            l[hour] = overageRetWater_t
+            s.overageReturnWater_t.set(l)
+        except AveragerQueueEmptyError:
+            pass
 
 
     def evMinuteTick(s, minute):
-        s._room_tIntegrator.push(s.room_t)
-        s._retWater_tIntegrator.push(s.returnWater_t)
+        try:
+            s._room_tIntegrator.push(s.io.room_t())
+            s._retWater_tIntegrator.push(s.io.retWater_t())
+        except TermoSensorDs18b20.Error:
+            pass
 
 
     def room_tOverage(s):
@@ -244,41 +255,6 @@ class Boiler():
         return aq.round()
 
 
-    def checkTermoSensors(s):
-        if s.state() == "STOPPED":
-            return
-
-        if s.room_t and (s.room_t < -10 or s.room_t > 40):
-            s.log.err("termosensor room_t is not correct, %.1f degree." % s.room_t)
-            msg = "Ошибка термодатчика room_t, " \
-                  "он показывает температуру: %.1f градусов. " \
-                  "Котёл остановлен." % s.room_t
-            s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
-            s.stop()
-            return
-
-        if s.boiler_t and (s.boiler_t < -1 or s.boiler_t > 120):
-            s.log.err("termosensor boiler_t is not correct, %.1f degree." % s.room_t)
-            msg = "Ошибка термодатчика boiler_t, " \
-                  "он показывает температуру: %.1f градусов. " \
-                  "Котёл остановлен." % s.boiler_t
-            s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
-            s.stop()
-            return
-
-        if s.returnWater_t and (s.returnWater_t < -1 or s.returnWater_t > 120):
-            s.log.err("termosensor returnWater_t is not correct, %.1f degree." % s.room_t)
-            msg = "Ошибка термодатчика returnWater_t, " \
-                  "он показывает температуру: %.1f градусов. " \
-                  "Котёл остановлен." % s.boiler_t
-            s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
-            s.stop()
-            return
-
-
     def targetRoom_t(s):
         return float(s._targetRoom_t.val)
 
@@ -292,6 +268,8 @@ class Boiler():
 
 
     def setTargetRoom_t(s, t):
+        if s.state() == "STOPPED":
+            raise BoilerNotStartError(s.log, 'Can`t set temperature: boiler stopped')
         s._targetRoom_t.set(float(t))
         s.skynetSendUpdate()
 
@@ -346,12 +324,13 @@ class Boiler():
         s.setState("WAITING")
         s.log.info("boiler started")
         s.sn.notify('info', "Котёл включен")
-        s.tgSendAdmin("Котёл включен")
+        s.toAdmin("Котёл включен")
+        s.stopReason = ""
         return True
 
 
-    def stop(s):
-        if s.state() == "IGNITING":
+    def stop(s, reason):
+        if s.state() == "IGNITING" and s._ignitTask:
             s._ignitTask.remove()
             s._ignitTask = None
 
@@ -377,7 +356,8 @@ class Boiler():
 
         s.setState("STOPPED")
         s.log.info("boiler stopped")
-        s.sn.notify('info', "Котёл остановлен")
+        s.sn.notify('info', "Котёл остановлен: %s" % reason)
+        s.stopReason = reason
 
 
     def ignitFlame(s):
@@ -390,7 +370,7 @@ class Boiler():
             Task.sleep(2000)
             s.log.info("the flame was stabilizated")
             s.sn.notify('info', 'Нагрев запущен')
-            s.tgSendAdmin('Нагрев запущен')
+            s.toAdmin('Нагрев запущен')
             s._ignitionCounter.set(int(s._ignitionCounter.val) + 1)
             s.setState("HEATING")
 
@@ -438,7 +418,7 @@ class Boiler():
             else:
                 s.log.info("The flame was stabilizated")
                 s.sn.notify('info', 'Нагрев запущен')
-                s.tgSendAdmin('Нагрев запущен')
+                s.toAdmin('Нагрев запущен')
                 s.setState("HEATING")
                 s._ignitionCounter.set(int(s._ignitionCounter.val) + 1)
                 return True
@@ -449,9 +429,10 @@ class Boiler():
             s.io.airFunDisable()
             s.tcBurning.reset()
             msg = "Не удалось зажечь пламя, все попытки исчерпаны."
-            s.tgSendAdmin(msg)
+            s.toAdmin(msg)
             s.sn.notify('error', msg)
-            s.task.sendMessage("stop")
+            s.task.sendMessage({'cmd': 'stop',
+                                'reason': 'Can`t ignition flame. All attempts exceded'})
             raise BoilerError(s.log, "Can't start heating. All attempts were exhausted.")
 
 
@@ -476,29 +457,60 @@ class Boiler():
 
 
     def doWaiting(s):
-        if not s.room_t or not s.boiler_t:
+        try:
+            boiler_t = s.io.boiler_t()
+        except TermoSensorDs18b20.Error as e:
+            s.toAdmin("Глючит датчик температуры котла: %s" % e)
             return
 
-        if s.boiler_t <= s.conf.boiler['targetBoilerMinT'] and s.room_t < s.targetRoomMin_t():
+        try:
+            room_t = s.io.room_t()
+        except TermoSensorDs18b20.Error as e:
+            s.toAdmin("Глючит датчик мастерской: %s" % e)
+            return
+
+        if boiler_t <= s.conf.boiler['targetBoilerMinT'] and room_t < s.targetRoomMin_t():
             s.startHeating()
             return
 
 
     def doHeating(s):
-        if s.tcBurning.duration() > 10 * 60 and s.boiler_t < 30:
-            s.stop()
+        try:
+            boiler_t = s.io.boiler_t()
+        except TermoSensorDs18b20.Error as e:
+            s.stopHeating()
+            s.setState("WAITING")
+            s.log.err("Stoped by termo sensor error")
+            msg = "Глючит датчик температуры котла: %s.\n " \
+                  "Нагрев остановлен" % e
+            s.toAdmin(msg)
+            s.sn.notify('error', msg)
+            return
+
+        try:
+            room_t = s.io.room_t()
+        except TermoSensorDs18b20.Error as e:
+            s.stopHeating()
+            s.setState("WAITING")
+            msg = "Глючит датчик температуры в мастерской: %s.\n" \
+                  "Нагрев остановлен" % e
+            s.toAdmin(msg)
+            s.sn.notify('error', msg)
+            return
+
+        if s.tcBurning.duration() > 10 * 60 and boiler_t < 30:
+            s.stop("Boiler heating stopped by timeout")
             s.log.err("Boiler stopped by timeout. boiler t: %.1f, "
-                        "heating time: %d" % (s.boiler_t, s.tcBurning.duration()))
+                        "heating time: %d" % (boiler_t, s.tcBurning.duration()))
             msg = "Котёл работает более %d секунд а температура в котле " \
                   "так и не превысила 30 градусов. " \
                   "Котёл остановлен." % s.tcBurning.duration()
             s.sn.notify('error', msg)
-            s.tgSendAdmin(msg)
+            s.toAdmin(msg)
             return
 
-
-        if s.boiler_t >= s.conf.boiler['targetBoilerMaxT'] or s.room_t >= s.targetRoomMax_t():
-            if s.room_t < s.targetRoomMin_t() and s.tcBurning.duration() < 20:
+        if boiler_t >= s.conf.boiler['targetBoilerMaxT'] or room_t >= s.targetRoomMax_t():
+            if room_t < s.targetRoomMin_t() and s.tcBurning.duration() < 20:
                 s.log.err("The boiler has reached the temperature %.1f "
                             "is very too quickly" % s.conf.boiler['targetBoilerMaxT'])
                 msg = "Котёл набрал температуру до %.1f градусов " \
@@ -506,37 +518,45 @@ class Boiler():
                       "Котёл остановлен." % (s.conf.boiler['targetBoilerMaxT'],
                                              s.tcBurning.duration())
                 s.sn.notify('error', msg)
-                s.tgSendAdmin(msg)
-                s.stop()
+                s.toAdmin(msg)
+                s.stop("Boiler heating stopped: The boiler has reached " \
+                       "the temperature is very too quickly")
                 return
 
-            if s.room_t >= s.targetRoomMax_t():
+            if room_t >= s.targetRoomMax_t():
                 if s.io.isFunHeaterEnabled():
                     s.io.funHeaterEnable(20000)
 
-            if s.boiler_t >= s.conf.boiler['targetBoilerMaxT']:
+            if boiler_t >= s.conf.boiler['targetBoilerMaxT']:
                 msg = 'Нагрев прерван из за превышения температуры котла'
             else:
                 msg = 'Нагрев завершен'
-            s.tgSendAdmin("%s, время нагрева: %s\n"
+            s.toAdmin("%s, время нагрева: %s\n"
                             "Температура в мастерской: %.1f градусов" %
-                                (msg, timeDurationStr(s.tcBurning.duration()), s.room_t))
+                                (msg, timeDurationStr(s.tcBurning.duration()), room_t))
 
             s.stopHeating()
             s.setState("WAITING")
             return
 
-        if (s.returnWater_t >= s.conf.boiler['funHeater']['retWaterT']
-                and s.boiler_t >= s.conf.boiler['funHeater']['boilerT']
-                and not s.io.isFunHeaterEnabled()):
-            s.io.funHeaterEnable()
+        try:
+            returnWater_t = s.io.retWater_t()
+            if (returnWater_t >= s.conf.boiler['funHeater']['retWaterT']
+                    and boiler_t >= s.conf.boiler['funHeater']['boilerT']
+                    and not s.io.isFunHeaterEnabled()):
+                s.io.funHeaterEnable()
+        except TermoSensorDs18b20.Error as e:
+            msg = "Глючит датчик температуры обратки: %s" % e
+            s.toAdmin(msg)
+            s.sn.notify('error', msg)
+
 
         if not s.io.isFlameBurning():
             s.sn.notify('error', "Пламя в котле самопроизвольно погасло!")
             s.setState("WAITING")
             s.stopHeating()
             s.log.err("the flame went out!")
-            s.tgSendAdmin("Пламя в котле самопроизвольно погасло!")
+            s.toAdmin("Пламя в котле самопроизвольно погасло!")
             Task.sleep(3000)
             return False
 
@@ -558,9 +578,10 @@ class Boiler():
         s.httpServer.destroy()
         s.storage.destroy()
         s.sn.notify('info', "boiler.py process was killed")
+        s.toAdmin('ПО котла остановлено')
 
 
-    def tgSendAdmin(s, msg):
+    def toAdmin(s, msg):
         s.tc.sendToChat('stelhs', "Boiler: %s" % msg)
 
 
@@ -580,13 +601,28 @@ class Boiler():
         data = {
                 'state': str(s._state),
                 'target_t': s.targetRoom_t(),
-                'room_t': s.room_t,
-                'boiler_box_t': s.io.boilerInside_t(),
-                'boiler_t': s.boiler_t,
-                'return_t': s.returnWater_t,
                 'ignition_counter': s.ignitionCounter(),
                 'fuel_consumption': s.fuelConsumption(),
                 }
+        try:
+            data['room_t'] = s.io.room_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        try:
+            data['boiler_t'] = s.io.boiler_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        try:
+            data['return_t'] = s.io.retWater_t()
+        except TermoSensorDs18b20.Error:
+            pass
+
+        try:
+            data['boiler_box_t'] = s.io.boilerInside_t()
+        except TermoSensorDs18b20.Error:
+            pass
 
         s.sn.notify('ledsUpdate', leds)
         s.sn.notify('boilerState', data)
@@ -604,10 +640,23 @@ class Boiler():
     def __str__(s):
         str = "Boiler state: %s\n" % s.state()
         if s.state() != "STOPPED":
-            str += "current boiler t: %.1f\n" % s.boiler_t
-            str += "current return water t: %.1f\n" % s.returnWater_t
+            try:
+                str += "current boiler t: %.1f\n" % s.io.boiler_t()
+            except TermoSensorDs18b20.Error:
+                str += "current boiler t: Error\n"
+
+            try:
+                str += "current return water t: %.1f\n" % s.io.retWater_t()
+            except TermoSensorDs18b20.Error:
+                str += "current return water t: Error\n"
+
             str += "target room t: %.1f - %.1f\n" % (s.targetRoomMin_t(), s.targetRoomMax_t())
-            str += "current room t: %.1f\n" % s.room_t
+
+            try:
+                str += "current room t: %.1f\n" % s.io.room_t()
+            except TermoSensorDs18b20.Error:
+                str += "current room t: Error\n"
+
             str += "current burning time: %s\n" % timeDurationStr(s.tcBurning.duration())
             str += "total burning time: %s\n" % timeDurationStr(s.burningTimeTotal())
             str += "total fuel consumption: %.1f liters\n" % s.fuelConsumption()
@@ -641,6 +690,10 @@ class Boiler():
             s.httpServer.setReqHandler("GET", "/boiler/fun_heater_disable", s.disableFunHeaterHandler)
 
 
+        def toAdmin(s, msg):
+            s.boiler.toAdmin("Http Request: %s" % msg)
+
+
         def resetStatHandler(s, args, conn):
             s.boiler.log.debug('reset statistics by http request')
             s.boiler.resetStatistics()
@@ -654,6 +707,8 @@ class Boiler():
                 s.boiler.setTargetRoom_t(args['t'])
             except ValueError as e:
                 raise HttpHandlerError("Incorrect temperature %s" % args['t'])
+            except BoilerNotStartError as e:
+                raise HttpHandlerError(e)
 
 
         def startHandler(s, args, conn):
@@ -672,12 +727,12 @@ class Boiler():
 
         def enableFunHeaterHandler(s, args, conn):
             s.boiler.io.funHeaterEnable()
-            s.boiler.tgSendAdmin('Тепло-вентилятор включен по REST запросу')
+            s.toAdmin('Тепло-вентилятор включен по REST запросу')
 
 
         def disableFunHeaterHandler(s, args, conn):
             s.boiler.io.funHeaterDisable()
-            s.boiler.tgSendAdmin('Тепло-вентилятор отключен по REST запросу')
+            s.toAdmin('Тепло-вентилятор отключен по REST запросу')
 
 
 

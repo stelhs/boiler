@@ -5,6 +5,9 @@ from sr90Exceptions import *
 class BoilerError(AppError):
     pass
 
+class BoilerNotStartError(AppError):
+    pass
+
 # Skynet notifier client errors
 
 class SkynetNotifierError(AppError):

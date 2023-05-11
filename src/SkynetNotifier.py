@@ -49,6 +49,9 @@ class SkynetNotifier():
                 try:
                     (type, data) = item
                     s.send(type, data)
+#                except SkynetNotifierResponseError as e:
+ #                   print(e)
+  #                  continue
                 except SkynetNotifierError:
                     s.close()
                     continue
