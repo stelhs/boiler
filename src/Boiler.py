@@ -36,8 +36,6 @@ class Boiler():
         s._burningTime = s.storage.key('/burning_time', 0)
         s._ignitionCounter = s.storage.key('/ignition_counter', 0)
         s._boilerEnabled = s.storage.key('/enabled', False)
-        s.overageRoom_t = s.storage.key('/overage_room_t', {})
-        s.overageReturnWater_t = s.storage.key('/overage_return_water_t', {})
 
 
         s.io = HwIo()
@@ -74,7 +72,6 @@ class Boiler():
         s._checkWaterPressure = Observ(lambda: s.io.isPressureNormal(), s.evWaterPressure)
         s._checkDiffWater_t = Observ(lambda: (s.io.boiler_t() - s.io.retWater_t()) > 3,
                                      s.evWaterPumpSwitcher, ignoreFirst=False)
-        s._hour = Observ(lambda: datetime.datetime.now().hour, s.evHourTick)
         s._minute = Observ(lambda: datetime.datetime.now().minute, s.evMinuteTick)
 
         s._room_tIntegrator = AveragerQueue()
@@ -152,7 +149,6 @@ class Boiler():
             except TermoSensorDs18b20.Error as e:
                 s.toAdmin("Глючит датчик температуры: %s" % e)
 
-            s._hour()
             s._minute()
 
             if s.state() == "WAITING":
@@ -213,44 +209,12 @@ class Boiler():
             s.io.waterPumpEnable(60000 * 2)
 
 
-    def evHourTick(s, hour):
-        try:
-            overageRoom_t = s._room_tIntegrator.round()
-            overageRetWater_t = s._retWater_tIntegrator.round()
-        except AveragerQueueEmptyError:
-            pass
-
-        s._room_tIntegrator.clear()
-        l = s.overageRoom_t.val
-        l[hour] = overageRoom_t
-        s.overageRoom_t.set(l)
-
-        s._retWater_tIntegrator.clear()
-        l = s.overageReturnWater_t.val
-        l[hour] = overageRetWater_t
-        s.overageReturnWater_t.set(l)
-
-
     def evMinuteTick(s, minute):
         try:
             s._room_tIntegrator.push(s.io.room_t())
             s._retWater_tIntegrator.push(s.io.retWater_t())
         except TermoSensorDs18b20.Error:
             pass
-
-
-    def room_tOverage(s):
-        queue = list(s.overageRoom_t.val.values())
-        aq = AveragerQueue(queue=queue)
-        aq.push(s._room_tIntegrator.round())
-        return aq.round()
-
-
-    def returnWater_tOverage(s):
-        queue = list(s.overageReturnWater_t.val.values())
-        aq = AveragerQueue(queue=queue)
-        aq.push(s._retWater_tIntegrator.round())
-        return aq.round()
 
 
     def targetRoom_t(s):
@@ -266,8 +230,6 @@ class Boiler():
 
 
     def setTargetRoom_t(s, t):
-        if s.state() == "STOPPED":
-            raise BoilerNotStartError(s.log, 'Can`t set temperature: boiler stopped')
         s._targetRoom_t.set(float(t))
         s.skynetSendUpdate()
 
@@ -573,12 +535,12 @@ class Boiler():
 
     def stat(s):
         data = {'state': s.state(),
+                'stopReason': s.stopReason,
                 'hwPowerState': s.io.isHwEnabled(),
                 'target_t': s.targetRoom_t(),
                 'ignitionCounter': s.ignitionCounter(),
                 'fuelConsumption': s.fuelConsumption(),
-                'overageRoom_t': s.overageRoom_t.val,
-                'overageReturnWater_t': s.overageReturnWater_t.val,
+                'burningTimeTotal': s.burningTimeTotal(),
                 'overHeartingState': s.io.isOverHearting(),
                 'pressureState': s.io.isPressureNormal(),
                 'funHeaterState': s.io.isFunHeaterEnabled()}
@@ -597,9 +559,6 @@ class Boiler():
             data['return_t'] = s.io.retWater_t()
         except TermoSensorDs18b20.Error:
             pass
-
-        if s.state() == 'STOPPED' and s.stopReason:
-            data['stopReason'] = stopReason
         return data
 
 
@@ -664,8 +623,6 @@ class Boiler():
         s.tcBurning.reset()
         s._burningTime.set(0)
         s._ignitionCounter.set(0)
-        s.overageRoom_t.set({})
-        s.overageReturnWater_t.set({})
 
 
     def __str__(s):
@@ -694,11 +651,6 @@ class Boiler():
             str += "total energy consumption: %.1f kW*h\n" % s.energyConsumption()
             str += "ignition counter: %d\n" % s.ignitionCounter()
             str += "fun heater: %s\n" % s.io.isFunHeaterEnabled()
-            try:
-                str += "overage room t: %.1f\n" % s.room_tOverage()
-                str += "overage return water t: %.1f\n" % s.returnWater_tOverage()
-            except AveragerQueueEmptyError:
-                pass
         return str
 
 
